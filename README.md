@@ -202,12 +202,15 @@ filters, one per ear:
   unstaged, long rt60 becomes raw gain and the bus hard-clips (audible as
   clicking; found by ear). The staging is Freeverb-style: fixed
   attenuation into the comb bank (0.06), fixed makeup after diffusion
-  (2.5), feedback capped at 0.985, and the wet bus saturating smoothly
+  (5.0), feedback capped at 0.985, and the wet bus saturating smoothly
   (`tanh`). rt60 therefore changes decay *time* only, never loudness —
   an earlier √(1−g) output normalization made long rt60 quieter, which is
   the wrong feel and was removed. Sustained resonance at extreme settings
-  growls into the ceiling; it may not click. The dry path carries no
-  compression or saturation, ever.
+  growls into the ceiling; it may not click. Every Room parameter
+  (mix/ghost/haunt/damp and each comb's feedback) glides through a ~15 ms
+  per-sample smoother: instant parameter jumps on charged delay lines are
+  zipper clicks, which was the residual "clicky mix". The dry path
+  carries no compression or saturation, ever.
 - On an algorithm/mode change the delay *taps* move but the buffers keep
   their contents: the previous structure's tail briefly haunts the new one.
 

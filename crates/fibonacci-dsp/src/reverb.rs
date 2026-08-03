@@ -58,10 +58,14 @@ const ALLPASS_G: f32 = 1.0 / PHI;
 /// normalized comb output by √(1−g), which made long rt60 *quieter*:
 /// wrong feel, found by ear 2026-08-03).
 const COMB_INPUT_GAIN: f32 = 0.06;
-const WET_MAKEUP_GAIN: f32 = 2.5;
+const WET_MAKEUP_GAIN: f32 = 5.0;
 /// Feedback ceiling: bounds worst-case standing-wave buildup so sustained
 /// resonance growls into the tanh ceiling instead of pinning it.
 const MAX_FB: f32 = 0.985;
+/// Per-sample one-pole coefficient for parameter smoothing (~15 ms at
+/// 48 kHz). Every user parameter glides: instant jumps on charged delay
+/// lines are audible clicks — the "mix is clicky" bug was zipper noise.
+const PARAM_SMOOTH: f32 = 0.0014;
 
 /// User-facing reverb parameters.
 #[derive(Clone, Copy, Debug)]
@@ -101,7 +105,9 @@ struct Comb {
     write: usize,
     delay: usize,
     delay_seconds: f32,
+    /// Smoothed feedback (glides toward `fb_target` per sample).
     fb: f32,
+    fb_target: f32,
     lp: f32,
 }
 
@@ -113,6 +119,7 @@ impl Comb {
             delay: 1,
             delay_seconds: 0.0,
             fb: 0.0,
+            fb_target: 0.0,
             lp: 0.0,
         }
     }
@@ -123,10 +130,11 @@ impl Comb {
     }
 
     fn set_rt60(&mut self, rt60: f32) {
-        self.fb = 0.001f32.powf(self.delay_seconds / rt60.max(0.05)).min(MAX_FB);
+        self.fb_target = 0.001f32.powf(self.delay_seconds / rt60.max(0.05)).min(MAX_FB);
     }
 
     fn process(&mut self, x: f32, damp: f32) -> f32 {
+        self.fb += PARAM_SMOOTH * (self.fb_target - self.fb);
         let read = (self.write + self.buf.len() - self.delay) % self.buf.len();
         let y = self.buf[read];
         self.lp = y + damp * (self.lp - y);
@@ -209,7 +217,12 @@ impl Allpass {
 
 pub struct StereoVerb {
     sample_rate: f32,
+    /// Target parameters; the smoothed actuals below glide toward them.
     params: VerbParams,
+    mix_s: f32,
+    ghost_s: f32,
+    haunt_s: f32,
+    damp_s: f32,
     /// Structural send per op: carriers 1.0, modulators `1/φ^(depth−1)`
     /// (further scaled by `params.ghost` at runtime).
     send: [f32; NUM_OPS],
@@ -226,9 +239,14 @@ impl StereoVerb {
         let len = (MAX_DELAY_SECONDS * sample_rate) as usize + 2;
         let ghost_len = (MAX_DELAY_SECONDS * GHOST_DELAY_FACTOR * sample_rate) as usize + 2;
         let ghost_a = allpass_coeff_for(DESIGN_HZ, sample_rate, PHASE_PER_PASS);
+        let defaults = VerbParams::default();
         StereoVerb {
             sample_rate,
-            params: VerbParams::default(),
+            params: defaults,
+            mix_s: defaults.mix,
+            ghost_s: defaults.ghost,
+            haunt_s: defaults.haunt,
+            damp_s: defaults.damp,
             send: [1.0; NUM_OPS],
             is_carrier: [true; NUM_OPS],
             combs_l: (0..NUM_OPS).map(|_| Comb::new(len)).collect(),
@@ -251,7 +269,6 @@ impl StereoVerb {
             self.combs_l[i].set_rt60(self.params.rt60);
             self.combs_r[i].set_rt60(self.params.rt60);
             self.ghosts[i].set_delay(left * GHOST_DELAY_FACTOR, self.sample_rate);
-            self.ghosts[i].fb = GHOST_MAX_FB * self.params.haunt;
             let carrier = compiled.carriers >> i & 1 == 1;
             self.is_carrier[i] = carrier;
             self.send[i] = if carrier {
@@ -267,9 +284,6 @@ impl StereoVerb {
         for comb in self.combs_l.iter_mut().chain(self.combs_r.iter_mut()) {
             comb.set_rt60(params.rt60);
         }
-        for ghost in self.ghosts.iter_mut() {
-            ghost.fb = GHOST_MAX_FB * params.haunt;
-        }
     }
 
     pub fn params(&self) -> VerbParams {
@@ -278,16 +292,24 @@ impl StereoVerb {
 
     /// One sample in, one stereo sample out. Allocation-free.
     pub fn process(&mut self, frame: &Frame) -> (f32, f32) {
+        // Glide every user parameter toward its target: instant jumps on a
+        // loud sustained signal are clicks.
+        self.mix_s += PARAM_SMOOTH * (self.params.mix - self.mix_s);
+        self.ghost_s += PARAM_SMOOTH * (self.params.ghost - self.ghost_s);
+        self.haunt_s += PARAM_SMOOTH * (self.params.haunt - self.haunt_s);
+        self.damp_s += PARAM_SMOOTH * (self.params.damp - self.damp_s);
+
         // Op sends: carriers full, modulators through the ghost bleed.
         let mut sends = [0.0f32; NUM_OPS];
         for i in 0..NUM_OPS {
-            let bleed = if self.is_carrier[i] { 1.0 } else { self.params.ghost };
+            let bleed = if self.is_carrier[i] { 1.0 } else { self.ghost_s };
             sends[i] = frame.ops[i] * self.send[i] * bleed;
         }
         // Ghost Lines first: op i's recirculating, phase-rotating echo…
         let mut haunted = [0.0f32; NUM_OPS];
-        if self.params.haunt > 0.0 {
+        if self.haunt_s > 1e-4 {
             for i in 0..NUM_OPS {
+                self.ghosts[i].fb = GHOST_MAX_FB * self.haunt_s;
                 haunted[i] = self.ghosts[i].process(sends[i]);
             }
         }
@@ -296,9 +318,9 @@ impl StereoVerb {
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
-            let x = (sends[i] + self.params.haunt * haunted[from]) * COMB_INPUT_GAIN;
-            wet_l += self.combs_l[i].process(x, self.params.damp);
-            wet_r += self.combs_r[i].process(x, self.params.damp);
+            let x = (sends[i] + self.haunt_s * haunted[from]) * COMB_INPUT_GAIN;
+            wet_l += self.combs_l[i].process(x, self.damp_s);
+            wet_r += self.combs_r[i].process(x, self.damp_s);
         }
         let scale = WET_MAKEUP_GAIN / NUM_OPS as f32;
         wet_l *= scale;
@@ -315,8 +337,8 @@ impl StereoVerb {
         // instrument's direct voice.
         wet_l = wet_l.tanh();
         wet_r = wet_r.tanh();
-        let dry = frame.mix * (1.0 - self.params.mix);
-        (dry + wet_l * self.params.mix, dry + wet_r * self.params.mix)
+        let dry = frame.mix * (1.0 - self.mix_s);
+        (dry + wet_l * self.mix_s, dry + wet_r * self.mix_s)
     }
 }
 
