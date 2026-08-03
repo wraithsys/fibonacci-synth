@@ -205,7 +205,10 @@ filters, one per ear:
   unstaged, long rt60 becomes raw gain and the bus hard-clips (audible as
   clicking; found by ear). The staging is Freeverb-style: fixed
   attenuation into the comb bank (0.06), fixed makeup after diffusion
-  (5.0), feedback capped at 0.985, and the wet bus saturating smoothly
+  (25.0 — tuned with `examples/verb_probe.rs` so full-wet RMS matches dry
+  for sustained tonal input; drones live off-resonance, so arithmetic
+  estimates ran 14 dB shy), feedback capped at 0.985, and the wet bus
+  saturating smoothly
   (`tanh`). rt60 therefore changes decay *time* only, never loudness —
   an earlier √(1−g) output normalization made long rt60 quieter, which is
   the wrong feel and was removed. Sustained resonance at extreme settings
