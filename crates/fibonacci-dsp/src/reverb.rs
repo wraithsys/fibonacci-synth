@@ -80,6 +80,32 @@ const PARAM_SMOOTH: f32 = 0.0014;
 /// golden-staggered rates, fractional reads, ±ppm pitch wobble.
 const MOD_DEPTH_SAMPLES: f32 = 9.0;
 const MOD_BASE_HZ: f32 = 0.31;
+/// DC blocker pole. A comb amplifies DC by 1/(1−g) — up to 67× at the
+/// feedback cap, ~100× through the full wet chain — and hot operator
+/// feedback (or the Rip) makes the voice's waveform asymmetric, i.e. DC.
+/// Unblocked, that DC rails the tanh to a constant: RMS 1.0, speakers
+/// silent, one side dying before the other (found by probe, 2026-08-03 —
+/// "no audio at 100% mix"). The blocker is a zero at 0 Hz with a ~3.5 Hz
+/// corner: even a 27.5 Hz drone passes untouched.
+const DC_BLOCK_R: f32 = 0.9995;
+
+struct DcBlock {
+    x1: f32,
+    y1: f32,
+}
+
+impl DcBlock {
+    fn new() -> Self {
+        DcBlock { x1: 0.0, y1: 0.0 }
+    }
+
+    fn process(&mut self, x: f32) -> f32 {
+        let y = x - self.x1 + DC_BLOCK_R * self.y1;
+        self.x1 = x;
+        self.y1 = y;
+        y
+    }
+}
 
 /// User-facing reverb parameters.
 #[derive(Clone, Copy, Debug)]
@@ -260,6 +286,12 @@ pub struct StereoVerb {
     ap_l: Vec<Allpass>,
     ap_r: Vec<Allpass>,
     ghosts: Vec<GhostLine>,
+    dc: Vec<DcBlock>,
+    /// Post-saturation blockers: tanh *rectifies* — squashing an
+    /// asymmetric (hot-feedback) waveform manufactures fresh DC downstream
+    /// of the input blockers.
+    wet_dc_l: DcBlock,
+    wet_dc_r: DcBlock,
 }
 
 impl StereoVerb {
@@ -292,6 +324,9 @@ impl StereoVerb {
             ap_l: ALLPASS_SECONDS.iter().map(|&s| Allpass::new(s, sample_rate)).collect(),
             ap_r: ALLPASS_SECONDS.iter().map(|&s| Allpass::new(s, sample_rate)).collect(),
             ghosts: (0..NUM_OPS).map(|_| GhostLine::new(ghost_len, ghost_a)).collect(),
+            dc: (0..NUM_OPS).map(|_| DcBlock::new()).collect(),
+            wet_dc_l: DcBlock::new(),
+            wet_dc_r: DcBlock::new(),
         }
     }
 
@@ -356,7 +391,8 @@ impl StereoVerb {
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
-            let x = (sends[i] + self.haunt_s * haunted[from]) * COMB_INPUT_GAIN;
+            let x =
+                self.dc[i].process(sends[i] + self.haunt_s * haunted[from]) * COMB_INPUT_GAIN;
             wet_l += self.combs_l[i].process(x, self.damp_s);
             wet_r += self.combs_r[i].process(x, self.damp_s);
         }
@@ -373,8 +409,8 @@ impl StereoVerb {
         // haunted room may growl, but it may not click. The dry path stays
         // untouched — no compression or saturation ever touches the
         // instrument's direct voice.
-        wet_l = wet_l.tanh();
-        wet_r = wet_r.tanh();
+        wet_l = self.wet_dc_l.process(wet_l.tanh());
+        wet_r = self.wet_dc_r.process(wet_r.tanh());
         let dry = frame.mix * (1.0 - self.mix_s);
         (dry + wet_l * self.mix_s, dry + wet_r * self.mix_s)
     }

@@ -1,7 +1,7 @@
 //! Behavioral tests for the drone voice: determinism, the power-switch reset
 //! contract, and numeric health across the whole shipped algorithm range.
 
-use fibonacci_dsp::{Patch, RatioMode, Voice, ALGORITHMS, NUM_OPS};
+use fibonacci_dsp::{Patch, RatioMode, StereoVerb, VerbParams, Voice, ALGORITHMS, NUM_OPS};
 
 const SR: f32 = 48_000.0;
 
@@ -154,6 +154,40 @@ fn rip_is_stable_audible_and_off_by_default() {
     assert!(yb.iter().all(|x| x.is_finite()), "rip produced non-finite samples");
     let rms = (yb.iter().map(|x| x * x).sum::<f32>() / yb.len() as f32).sqrt();
     assert!(rms > 1e-3 && rms < 1.0, "rip rms out of range: {rms}");
+}
+
+/// Hot operator feedback makes the voice's waveform asymmetric (DC), and a
+/// comb bank amplifies DC ~100x — unblocked, the wet rails to a constant
+/// and the speakers go silent ("no audio at 100% mix"). The Room's DC
+/// blockers must keep the wet mean near zero and its dynamics alive.
+#[test]
+fn room_survives_hot_feedback_without_dc_rail() {
+    let mut patch = Patch::init(ALGORITHMS[3], RatioMode::Golden);
+    patch.feedback = 0.95;
+    patch.index = 1.0;
+    patch.rip = 0.6;
+    let mut voice = Voice::new(SR, patch);
+    voice.set_freq_hz(90.0);
+    let mut verb = StereoVerb::new(SR);
+    verb.configure(voice.patch(), voice.compiled());
+    verb.set_params(VerbParams {
+        mix: 1.0,
+        ghost: 1.0,
+        rt60: 10.0,
+        damp: 0.0,
+        haunt: 1.0,
+    });
+    let n = 5 * 48_000;
+    let (mut sum, mut lo, mut hi) = (0f64, f32::MAX, f32::MIN);
+    voice.render_frames(n, |_, frame| {
+        let (l, _r) = verb.process(frame);
+        sum += l as f64;
+        lo = lo.min(l);
+        hi = hi.max(l);
+    });
+    let mean = sum / n as f64;
+    assert!(mean.abs() < 0.05, "wet is DC-railed: mean {mean}");
+    assert!(hi - lo > 0.2, "wet has no dynamics: range {}", hi - lo);
 }
 
 /// Extreme settings (max levels, max feedback, inharmonic ratios) stay finite

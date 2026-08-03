@@ -207,8 +207,11 @@ filters, one per ear:
   attenuation into the comb bank (0.06), fixed makeup after diffusion
   (25.0 — tuned with `examples/verb_probe.rs` so full-wet RMS matches dry
   for sustained tonal input; drones live off-resonance, so arithmetic
-  estimates ran 14 dB shy), feedback capped at 0.985, and the wet bus
-  saturating smoothly
+  estimates ran 14 dB shy), feedback capped at 0.985, a DC blocker on
+  each comb input (zero at 0 Hz, ~3.5 Hz corner — hot operator feedback
+  and the Rip make the voice's waveform asymmetric, and a comb bank
+  amplifies DC ~100×; unblocked, the wet railed to an inaudible constant:
+  "no audio at 100% mix"), and the wet bus saturating smoothly
   (`tanh`). rt60 therefore changes decay *time* only, never loudness —
   an earlier √(1−g) output normalization made long rt60 quieter, which is
   the wrong feel and was removed. Sustained resonance at extreme settings
