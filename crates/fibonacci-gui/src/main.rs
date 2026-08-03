@@ -272,6 +272,9 @@ fn dither_circle(painter: &egui::Painter, center: Pos2, radius: f32, density: f3
 }
 
 fn one_bit_style(ctx: &egui::Context) {
+    // No anti-aliasing anywhere: the reference look is crisp deliberate
+    // pixels, not smoothed edges (Billy: "they dont look aliased").
+    ctx.tessellation_options_mut(|t| t.feathering = false);
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = BLACK;
     visuals.window_fill = BLACK;
@@ -1167,7 +1170,7 @@ impl eframe::App for App {
             Self::inverted_strip(
                 ui,
                 &format!(
-                    "THE MONOLOGALITH — ALGORITHM {} ({:04b}) — {} (DRONE)",
+                    "THE LOGALITH — ALGORITHM {} ({:04b}) — {} (DRONE)",
                     ROMAN[idx],
                     self.shadow.algorithm.0,
                     mode_name(self.shadow.ratio_mode).to_uppercase()

@@ -335,7 +335,7 @@ Strict 1-bit (white on black, hard rectangles, monospace), with dithering
 standing in for brightness everywhere — an operator's live output level is
 rendered as stipple density. Panels:
 
-- **The Monolith** (centerpiece): a golden logarithmic spiral whose
+- **The Logalith** (centerpiece): a golden logarithmic spiral whose
   vertices are displaced by the live stereo side signal (L−R) and whose
   segments crack out as rip + haunt rise. Coherent phase leaves the shell
   serene; phase violence visibly breaks it.
@@ -363,7 +363,8 @@ rendered as stipple density. Panels:
 1. ~~`fibonacci-dsp` + offline renders + tests~~
 2. ~~Realtime shell: `cpal` (WASAPI) output + `midir` MIDI in, lock-free
    ring buffers for control~~
-3. ~~`egui` front end: 1-bit style, live tree, the Monolith, the Room,
+3. ~~`egui` front end: 1-bit style, live tree, the Logalith, the Room,
    scopes, event log, data-driven voice~~ ← you are here
+   (design pass in progress — see DESIGN.md)
 4. Preset save/load; algorithm roster growth to 8 (then 13); WASAPI
    exclusive mode / ASIO if latency demands it; voice.txt content (Billy)
