@@ -85,7 +85,12 @@ through — cascaded echo density) or **parallel** (summed banks — classic
 Schroeder). F(6) = 8 leaves (Fibonacci ✓) gives 5 combination nodes, a
 32-point topology space, and a curated roster of Room algorithms — the
 same unfolding idea as the synth. Ghost cross-feed generalizes: rotation
-by 3 mod 8 is still coprime, the pentagram becomes an octagram. Open
+by 3 mod 8 is still coprime, the pentagram becomes an octagram. **Haas depth (Billy's nugget):** per-leaf pre-delays drawn from the
+Fibonacci numbers *as milliseconds* — 1, 2, 3, 5, 8, 13, 21, 34 — which
+sit exactly inside the Haas/precedence window (34 ms is the textbook
+limit). L/R take adjacent Fibonacci values for precedence-effect depth,
+and the mutually distinct offsets scatter coherent summing cancellations
+instead of stacking them. Open
 design decisions for Billy: does the Room's tree follow the synth's
 algorithm selection or get its own chips; and what the roster size is
 (5 or 8). Slots after the bubble-chains and the current Room verdict —
