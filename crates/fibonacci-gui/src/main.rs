@@ -271,6 +271,32 @@ fn dither_circle(painter: &egui::Painter, center: Pos2, radius: f32, density: f3
     }
 }
 
+/// Install the design-pass font if present (Billy's pick — currently Xilla).
+/// Falls back to the built-in monospace per missing file or missing glyphs
+/// (egui keeps the default fonts as fallbacks in the family list).
+fn install_font(ctx: &egui::Context) {
+    for path in [
+        "crates/fibonacci-gui/assets/font.otf",
+        "crates/fibonacci-gui/assets/font.ttf",
+        "assets/font.otf",
+        "assets/font.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts
+                .font_data
+                .insert("billy".into(), egui::FontData::from_owned(bytes));
+            for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+                if let Some(list) = fonts.families.get_mut(&family) {
+                    list.insert(0, "billy".into());
+                }
+            }
+            ctx.set_fonts(fonts);
+            return;
+        }
+    }
+}
+
 fn one_bit_style(ctx: &egui::Context) {
     // No anti-aliasing anywhere: the reference look is crisp deliberate
     // pixels, not smoothed edges (Billy: "they dont look aliased").
@@ -1266,6 +1292,7 @@ fn main() -> eframe::Result<()> {
         "BLOW YOUR PHASE OFF",
         options,
         Box::new(|cc| {
+            install_font(&cc.egui_ctx);
             one_bit_style(&cc.egui_ctx);
             match App::new() {
                 Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),

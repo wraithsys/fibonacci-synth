@@ -32,9 +32,14 @@ Monologalith — too close to the Korg Monologue).
 
 ## Open items (Billy's calls)
 
-- **Bitmap font**: the GUI will load `crates/fibonacci-gui/assets/font.ttf`
-  if present (falls back to the built-in monospace). Drop in any pixel font
-  you like; OFL/CC0 needed for release.
+- **Font**: Billy picked **Xilla** — installed as
+  `crates/fibonacci-gui/assets/font.otf`, loaded at startup with the
+  built-in monospace kept as glyph fallback (Xilla is a small display face;
+  φ, ×, — and friends may fall back). **License TODO**: Xilla arrived
+  without a license file (Cozette/Press Start 2P/Terminus in
+  `projects\fonts` all have theirs) — terms must be confirmed before
+  release, or we swap to one of the licensed alternates. Font *sizes* may
+  need retuning to Xilla's native size in the design pass.
 - **Icon**: final sigil — I can prototype constructions, Billy decides.
 - Whether the centerpiece uses the smooth polar spiral, the rectangle
   construction, or construction-lines-over-curve (my lean: construction
