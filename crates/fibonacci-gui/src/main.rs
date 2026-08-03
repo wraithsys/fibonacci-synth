@@ -334,7 +334,13 @@ fn one_bit_style(ctx: &egui::Context) {
     style
         .text_styles
         .insert(egui::TextStyle::Heading, FontId::monospace(15.0));
-    ctx.set_style(style);
+    // The OS theme must never touch this instrument: pin the theme and
+    // install the 1-bit style on BOTH theme slots, so a system light mode
+    // can't swap in stock visuals (which rendered everything hardcoded
+    // white as white-on-white).
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.style_mut_of(egui::Theme::Dark, |s| *s = style.clone());
+    ctx.style_mut_of(egui::Theme::Light, |s| *s = style);
 }
 
 /// Everything a session is: the sound, the room, the melody, the pitch.
@@ -932,7 +938,7 @@ impl eframe::App for App {
             }
         });
 
-        egui::SidePanel::left("stats").exact_width(170.0).show(ctx, |ui| {
+        egui::SidePanel::left("stats").exact_width(195.0).show(ctx, |ui| {
             let compiled = compile(self.shadow.algorithm);
             Self::inverted_strip(ui, "STRUCTURE");
             ui.add_space(2.0);
