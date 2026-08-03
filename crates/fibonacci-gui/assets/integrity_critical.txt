@@ -1,0 +1,6 @@
+# integrity_critical.txt — spoken when LOCAL φ INTEGRITY is critical
+# (below ~15%, with hysteresis). Same format as voice.txt: one box per
+# paragraph, blank lines between, # paragraphs ignored, hot-reloaded.
+#
+# While empty, the instrument falls back to integrity_low.txt, then
+# voice.txt. Author: Billy.

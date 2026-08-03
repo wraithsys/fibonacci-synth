@@ -459,6 +459,17 @@ fn load_lines(base: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// The discouragement bands (DESIGN.md): purely presentational, with
+/// hysteresis so states don't flicker at the threshold. Low enters below
+/// 47.5% and exits above 52.5%; Critical enters below 12.5% and exits
+/// above 17.5%.
+#[derive(Clone, Copy, PartialEq)]
+enum Dread {
+    Normal,
+    Low,
+    Critical,
+}
+
 struct App {
     rig: AudioRig,
     shadow: Patch,
@@ -475,6 +486,10 @@ struct App {
     /// Billy's low-integrity pool: spoken instead of voice.txt whenever
     /// LOCAL φ INTEGRITY drops below 50%.
     low_lines: Vec<String>,
+    /// The critical pool (< 15%), when it has content.
+    crit_lines: Vec<String>,
+    dread: Dread,
+    last_status_log: f64,
     voice_index: usize,
     voice_last_advance: f64,
     voice_last_reload: f64,
@@ -512,6 +527,9 @@ impl App {
             log: VecDeque::new(),
             voice_lines: load_lines("voice.txt"),
             low_lines: load_lines("integrity_low.txt"),
+            crit_lines: load_lines("integrity_critical.txt"),
+            dread: Dread::Normal,
+            last_status_log: 0.0,
             voice_index: 0,
             voice_last_advance: 0.0,
             voice_last_reload: 0.0,
@@ -540,6 +558,55 @@ impl App {
             app.push_log("no midi input found. pitch control by ui only.".into());
         }
         Ok(app)
+    }
+
+    fn integrity(&self) -> f32 {
+        100.0 * (1.0 - self.shadow.rip.max(self.shadow_verb.haunt))
+    }
+
+    /// Advance the dread state machine (hysteresis per the band constants)
+    /// and let the maintenance routine report more often as things degrade
+    /// — measurements only, always.
+    fn update_dread(&mut self, now: f64) {
+        let integrity = self.integrity();
+        let next = match self.dread {
+            Dread::Normal if integrity < 47.5 => Dread::Low,
+            Dread::Low if integrity > 52.5 => Dread::Normal,
+            Dread::Low if integrity < 12.5 => Dread::Critical,
+            Dread::Critical if integrity > 17.5 => Dread::Low,
+            current => current,
+        };
+        if next != self.dread {
+            self.dread = next;
+            let band = match next {
+                Dread::Normal => "nominal",
+                Dread::Low => "low",
+                Dread::Critical => "critical",
+            };
+            self.push_log(format!("integrity {integrity:.0}%. band: {band}."));
+        }
+        let interval = match self.dread {
+            Dread::Normal => f64::INFINITY,
+            Dread::Low => 30.0,
+            Dread::Critical => 10.0,
+        };
+        if now - self.last_status_log > interval {
+            self.last_status_log = now;
+            self.push_log(format!(
+                "integrity {integrity:.0}%. rip {:.2}. haunt {:.2}.",
+                self.shadow.rip, self.shadow_verb.haunt
+            ));
+        }
+    }
+
+    /// Horizontal tremble for the controls that caused the damage. Zero
+    /// except at critical dread; ±1 px, purely visual, never functional.
+    fn tremble(&self) -> f32 {
+        if self.dread == Dread::Critical {
+            ((self.frame_count / 2 % 3) as f32) - 1.0
+        } else {
+            0.0
+        }
     }
 
     fn push_log(&mut self, line: String) {
@@ -1006,12 +1073,14 @@ impl eframe::App for App {
         self.drain_viz();
         ctx.request_repaint();
         let now = ctx.input(|i| i.time);
+        self.update_dread(now);
 
         // Hot-reload Billy's voice file every ~2 s.
         if now - self.voice_last_reload > 2.0 {
             self.voice_last_reload = now;
             self.voice_lines = load_lines("voice.txt");
             self.low_lines = load_lines("integrity_low.txt");
+            self.crit_lines = load_lines("integrity_critical.txt");
         }
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
@@ -1041,13 +1110,12 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("log").min_height(150.0).show(ctx, |ui| {
             self.draw_scopes(ui);
             ui.add_space(4.0);
-            // Billy's voice, if the files exist. Below 50% φ-integrity the
-            // low-integrity pool speaks instead, when it has content.
-            let integrity = 100.0 * (1.0 - self.shadow.rip.max(self.shadow_verb.haunt));
-            let pool = if integrity < 50.0 && !self.low_lines.is_empty() {
-                &self.low_lines
-            } else {
-                &self.voice_lines
+            // Billy's voice, if the files exist: the pool follows the dread
+            // band, falling back gracefully while pools are unwritten.
+            let pool = match self.dread {
+                Dread::Critical if !self.crit_lines.is_empty() => &self.crit_lines,
+                Dread::Critical | Dread::Low if !self.low_lines.is_empty() => &self.low_lines,
+                _ => &self.voice_lines,
             };
             if !pool.is_empty() {
                 if now - self.voice_last_advance > 45.0 {
@@ -1310,13 +1378,20 @@ impl eframe::App for App {
             let (resp, painter) =
                 ui.allocate_painter(Vec2::new(ui.available_width(), 110.0), Sense::hover());
             self.draw_pentagram(&painter, resp.rect);
+            let t = self.tremble();
             let v = &mut self.shadow_verb;
             let mut verb_changed = false;
             verb_changed |= ui.add(egui::Slider::new(&mut v.mix, 0.0..=1.0).text("mix")).changed();
             verb_changed |= ui.add(egui::Slider::new(&mut v.ghost, 0.0..=1.0).text("ghost")).changed();
             verb_changed |= ui.add(egui::Slider::new(&mut v.rt60, 0.05..=20.0).text("rt60 s")).changed();
             verb_changed |= ui.add(egui::Slider::new(&mut v.damp, 0.0..=0.99).text("damp")).changed();
-            verb_changed |= ui.add(egui::Slider::new(&mut v.haunt, 0.0..=1.0).text("haunt")).changed();
+            verb_changed |= ui
+                .horizontal(|ui| {
+                    ui.add_space(2.0 + t);
+                    ui.add(egui::Slider::new(&mut v.haunt, 0.0..=1.0).text("haunt"))
+                })
+                .inner
+                .changed();
             if verb_changed {
                 self.send_verb();
             }
@@ -1393,7 +1468,13 @@ impl eframe::App for App {
                     self.shadow.index
                 ));
             }
-            let r = ui.add(egui::Slider::new(&mut self.shadow.rip, 0.0..=1.0).text("RIP"));
+            let t = self.tremble();
+            let r = ui
+                .horizontal(|ui| {
+                    ui.add_space(2.0 + t);
+                    ui.add(egui::Slider::new(&mut self.shadow.rip, 0.0..=1.0).text("RIP"))
+                })
+                .inner;
             patch_changed |= r.changed();
             if r.drag_stopped() {
                 log_line = Some(format!(
