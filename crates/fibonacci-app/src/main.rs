@@ -198,10 +198,10 @@ fn main() -> Result<()> {
                 let (l, r) = verb.process(frame);
                 let base = n * channels;
                 if channels == 1 {
-                    data[base] = 0.5 * (l + r);
+                    data[base] = (0.5 * (l + r)).clamp(-1.0, 1.0);
                 } else {
-                    data[base] = l;
-                    data[base + 1] = r;
+                    data[base] = l.clamp(-1.0, 1.0);
+                    data[base + 1] = r.clamp(-1.0, 1.0);
                     for c in 2..channels {
                         data[base + c] = 0.0;
                     }

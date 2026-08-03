@@ -197,6 +197,13 @@ filters, one per ear:
   coefficient 1/φ = φ − 1 ≈ 0.618.
 - **Decay**: per-comb feedback follows the RT60 model `g = 0.001^(T/rt60)`,
   with a one-pole lowpass in each loop (`damp`) for high-frequency rolloff.
+- **Gain honesty**: a comb resonates at up to `1/(1−g)`, and this
+  instrument feeds its reverb standing waves, not transients — so
+  unnormalized, long rt60 becomes raw gain and the bus hard-clips (audible
+  as clicking; found by ear). Comb outputs are therefore normalized by
+  `√(1−g)`, and the wet bus saturates smoothly (`tanh`): a haunted room may
+  growl, it may not click. The dry path carries no compression or
+  saturation, ever.
 - On an algorithm/mode change the delay *taps* move but the buffers keep
   their contents: the previous structure's tail briefly haunts the new one.
 

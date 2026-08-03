@@ -189,10 +189,10 @@ fn start_audio(patch: Patch, verb_params: VerbParams) -> Result<AudioRig> {
                     }
                     let at = (base + n) * channels;
                     if channels == 1 {
-                        data[at] = 0.5 * (l + r);
+                        data[at] = (0.5 * (l + r)).clamp(-1.0, 1.0);
                     } else {
-                        data[at] = l;
-                        data[at + 1] = r;
+                        data[at] = l.clamp(-1.0, 1.0);
+                        data[at + 1] = r.clamp(-1.0, 1.0);
                         for c in 2..channels {
                             data[at + c] = 0.0;
                         }
@@ -657,13 +657,16 @@ impl App {
         let mut prev: Option<Pos2> = None;
         for k in 0..=n {
             let theta = theta_max * k as f32 / n as f32;
-            let side = if self.side.is_empty() {
+            let raw = if self.side.is_empty() {
                 0.0
             } else {
                 self.side[(k * 7 + self.frame_count as usize) % self.side.len()]
             };
-            let jitter = side * max_r * 0.35 * (0.15 + violence);
-            let rr = (r_at(theta) + jitter).max(0.0);
+            // Soft-limit the displacement and cage the shell in its frame:
+            // a hot Room may shake the Logalith, never evict it.
+            let side = raw / (1.0 + raw.abs());
+            let jitter = side * max_r * 0.30 * (0.15 + violence);
+            let rr = (r_at(theta) + jitter).clamp(0.0, max_r * 1.04);
             let p = center + Vec2::new(theta.cos(), theta.sin()) * rr;
             if let Some(q) = prev {
                 // Cracks: segments drop out as phase violence rises.

@@ -122,7 +122,12 @@ impl Comb {
         self.lp = y + damp * (self.lp - y);
         self.buf[self.write] = x + self.lp * self.fb;
         self.write = (self.write + 1) % self.buf.len();
-        y
+        // Partial gain normalization: a comb resonates at up to 1/(1-g),
+        // and this instrument feeds it standing waves, not transients —
+        // unnormalized, long rt60 becomes raw gain and the bus clips
+        // (audibly "clicky"; found by ear 2026-08-03). The sqrt keeps some
+        // resonant bloom while bounding the explosion.
+        y * (1.0 - self.fb).sqrt()
     }
 }
 
@@ -299,6 +304,12 @@ impl StereoVerb {
         for ap in self.ap_r.iter_mut() {
             wet_r = ap.process(wet_r);
         }
+        // The wet bus saturates smoothly instead of clipping hard: a
+        // haunted room may growl, but it may not click. The dry path stays
+        // untouched — no compression or saturation ever touches the
+        // instrument's direct voice.
+        wet_l = wet_l.tanh();
+        wet_r = wet_r.tanh();
         let dry = frame.mix * (1.0 - self.params.mix);
         (dry + wet_l * self.params.mix, dry + wet_r * self.params.mix)
     }
