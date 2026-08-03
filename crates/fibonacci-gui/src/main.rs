@@ -448,6 +448,9 @@ fn scan_presets() -> Vec<String> {
 fn load_lines(base: &str) -> Vec<String> {
     for prefix in ["crates/fibonacci-gui/assets/", "assets/"] {
         if let Ok(text) = std::fs::read_to_string(format!("{prefix}{base}")) {
+            // Windows editors save CRLF; a CRLF blank line ("\r\n\r\n")
+            // never matches a "\n\n" split and silently empties the pool.
+            let text = text.replace('\r', "");
             return text
                 .split("\n\n")
                 .map(str::trim)
