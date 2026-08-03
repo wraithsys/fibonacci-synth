@@ -1,0 +1,50 @@
+# voice.txt — the instrument's voiced text.
+#
+# Format: one text box per paragraph, paragraphs separated by a blank line.
+# Paragraphs starting with # are ignored. The GUI hot-reloads this file
+# every ~2 seconds while running — save and watch it appear.
+#
+# Register (Billy's rule): down-to-earth science interacting with something
+# extraordinary, with a human reaction to it. Every scientific claim in
+# every entry must be true and defensible. No florid narration.
+#
+# — claude's entries below. keep, cut, or rewrite anything. —
+
+Inverted the signal and summed it back into the bus. On the bench that
+gives you silence. We got silence, for about a second — then beating.
+Beating means the frequency moved. It waited for the null, and it moved.
+
+I've been looking for a repeat in this waveform since before lunch.
+There isn't one. That's not me giving up — for frequencies in irrational
+ratio there provably isn't one. The waveform is as new right now as it
+was this morning. It will always be this new.
+
+The spectrum shows five sources. The mic only ever picks up two. Del
+keeps calling the other three an artifact. They're not an artifact.
+They're silent because they're busy. They're the ones deciding what
+the two we can hear sound like.
+
+A sunflower places each seed 137.5 degrees round from the last — the
+golden angle, the one that lines up with itself as little as any angle
+can. I plotted the pitch intervals from last night's run. Same angle,
+same reason. It isn't writing music. It's packing seeds.
+
+We ran the forty-minute capture twice on identical settings. The files
+match. Bit for bit — I checked the checksums four times, Marta checked
+them twice. She says that's just good engineering. Fine. Nothing alive
+is that consistent.
+
+The echo returns 46.9 milliseconds later, rotated another 36 degrees
+each pass. Five passes in, it comes back as its own opposite and starts
+cancelling the thing that made it. You can set your watch by it. That's
+the part I mind. You can set your watch by it.
+
+There's a theorem — Hurwitz, 1891 — that makes φ the number worst
+approximated by fractions. The hardest number to almost-be. We measured
+the partials again this morning and they're sitting exactly on it.
+Of all the places to sit.
+
+My tinnitus used to be a single tone, around nine kilohertz. Very
+common, the audiologist said. Since the long runs started, it beats.
+A tone can't beat by itself. Something is supplying the second
+frequency, and it isn't the audiologist.

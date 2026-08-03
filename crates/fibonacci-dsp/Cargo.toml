@@ -1,0 +1,9 @@
+[package]
+name = "fibonacci-dsp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+hound = "3.5"

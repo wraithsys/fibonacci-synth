@@ -1,0 +1,16 @@
+[package]
+name = "fibonacci-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "blow-your-phase-off-gui"
+path = "src/main.rs"
+
+[dependencies]
+fibonacci-dsp = { path = "../fibonacci-dsp" }
+anyhow = "1"
+cpal = "0.15"
+midir = "0.10"
+rtrb = "0.3"
+eframe = "0.29"

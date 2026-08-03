@@ -1,0 +1,18 @@
+[package]
+name = "fibonacci-app"
+version = "0.1.0"
+edition = "2021"
+
+# The instrument's name (by mistype, kept forever). Also conveniently means
+# new builds never collide with a running fibonacci-app.exe from before the
+# rename.
+[[bin]]
+name = "blow-your-phase-off"
+path = "src/main.rs"
+
+[dependencies]
+fibonacci-dsp = { path = "../fibonacci-dsp" }
+anyhow = "1"
+cpal = "0.15"
+midir = "0.10"
+rtrb = "0.3"
