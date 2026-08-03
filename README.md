@@ -161,11 +161,14 @@ follows its own nonlinearity, shaped by its depth in the tree:
 | 2 | φ⁰ = 1 | linear |
 | 3 | φ ≈ 1.618 | convex |
 | 4 | φ² ≈ 2.618 | more convex |
-| 1 (carrier self-feedback, algorithm V) | 1/φ ≈ 0.618 | concave — feedback grit arrives *first* |
+| 1 (always used for feedback) | 1/φ ≈ 0.618 | concave — feedback grit arrives *first* |
 
 Every curve hits exactly 0 at index 0 and exactly 1 at index 1, so index 0
-is pure sine carriers (the feedback path scales through the same family, so
-it also goes silent) and index 1 is the stock sound. Deeper operators lag
+is pure sine carriers and index 1 is the stock sound. Feedback always
+rides the concave depth-1 curve regardless of the feedback op's actual
+depth: scaling it by the deep op's convex curve stacked two attenuations
+(the op's level *and* its feedback) and made feedback inaudible below max
+index — found by ear. It still silences exactly at index 0. Deeper operators lag
 further behind at mid-knob, so raising INDEX blooms the tree from the
 shallow modulators downward: **the INDEX knob unfolds the tree in time**, the
 same gesture as the algorithm sequence but continuous. Carrier output levels

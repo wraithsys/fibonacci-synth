@@ -264,11 +264,13 @@ impl Voice {
                     1.0
                 };
         }
-        let eff_feedback = self.patch.feedback
-            * index_response(
-                self.compiled.depth[self.compiled.feedback_op],
-                self.patch.index,
-            );
+        // Feedback always rides the concave depth-1 curve (x^(1/φ)):
+        // grit arrives first on the INDEX sweep, in every algorithm.
+        // Scaling it by the feedback op's own (deep, convex) curve stacked
+        // two attenuations — the op's level and its feedback — and made
+        // feedback inaudible below max index (found by ear, 2026-08-03).
+        // Index 0 still silences it exactly.
+        let eff_feedback = self.patch.feedback * index_response(1, self.patch.index);
         let mix_norm = self.patch.master_level / self.compiled.carrier_count as f32;
         let inv_carriers = 1.0 / self.compiled.carrier_count as f32;
         let rip = self.patch.rip.clamp(0.0, 1.0);
