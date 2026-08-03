@@ -90,7 +90,11 @@ Fibonacci numbers *as milliseconds* — 1, 2, 3, 5, 8, 13, 21, 34 — which
 sit exactly inside the Haas/precedence window (34 ms is the textbook
 limit). L/R take adjacent Fibonacci values for precedence-effect depth,
 and the mutually distinct offsets scatter coherent summing cancellations
-instead of stacking them. Open
+instead of stacking them. **No new controls (Billy's constraint):** the recursive Room and Haas
+depth add zero parameters. New behaviors ride the existing knobs —
+haunt carries cross-feed and Haas spread, rt60/damp govern whatever
+topology stands. The panel is part of the identity; it does not grow.
+Open
 design decisions for Billy: does the Room's tree follow the synth's
 algorithm selection or get its own chips; and what the roster size is
 (5 or 8). Slots after the bubble-chains and the current Room verdict —
