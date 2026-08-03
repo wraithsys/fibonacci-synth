@@ -1,3 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/fibonacci-dsp", "crates/fibonacci-app", "crates/fibonacci-gui"]
+
+# Audio must survive an accidental `cargo run` without --release: optimize
+# dev builds too (debug asserts stay on).
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 2
