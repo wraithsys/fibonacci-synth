@@ -76,6 +76,21 @@ Mechanics (all data-driven, Billy authors the content):
 Slots after the Room verdict + bubble-chains; content (the pools) belongs
 to the content-lock phase.
 
+## The recursive Room (Billy, 2026-08-03: "do the parallel/serial fib shit again")
+
+The Room's density upgrade is not "more combs" — it is the instrument's own
+grammar applied to its reverb. A Fibonacci recursion tree over comb-filter
+leaves: each combination node chooses **series** (the sub-network feeds
+through — cascaded echo density) or **parallel** (summed banks — classic
+Schroeder). F(6) = 8 leaves (Fibonacci ✓) gives 5 combination nodes, a
+32-point topology space, and a curated roster of Room algorithms — the
+same unfolding idea as the synth. Ghost cross-feed generalizes: rotation
+by 3 mod 8 is still coprime, the pentagram becomes an octagram. Open
+design decisions for Billy: does the Room's tree follow the synth's
+algorithm selection or get its own chips; and what the roster size is
+(5 or 8). Slots after the bubble-chains and the current Room verdict —
+the topology rebuild must not land while the sound is still being judged.
+
 ## Implementation order (design pass)
 
 1. Feathering off + pixel-snap pass (done with the rename)
