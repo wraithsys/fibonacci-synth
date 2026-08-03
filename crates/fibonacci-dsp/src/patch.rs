@@ -38,6 +38,7 @@ pub fn index_response(depth: u8, index: f32) -> f32 {
 /// Operator frequency-ratio model. Each model is documented in README.md;
 /// ratios are relative to the voice's base frequency.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RatioMode {
     /// Integer harmonic series: 1, 2, 3, 4, 5. The conventional, consonant
     /// reference point.
@@ -99,6 +100,7 @@ impl RatioMode {
 
 /// Per-operator parameters.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpParams {
     /// The drone power switch. Turning an operator off is a true reset, not a
     /// bypass: it fades out over ~2 ms, then its phase accumulator and (for
@@ -117,6 +119,7 @@ pub struct OpParams {
 
 /// A complete sound description.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Patch {
     pub algorithm: AlgorithmId,
     pub ratio_mode: RatioMode,

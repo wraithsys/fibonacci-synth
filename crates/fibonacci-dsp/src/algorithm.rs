@@ -45,6 +45,7 @@ pub enum Combine {
 /// `1 = F(4)`, `2 = F(3)` inside `F(4)`, `3 = F(3)` directly under the root.
 /// A set bit means [`Combine::Parallel`]; clear means [`Combine::Series`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AlgorithmId(pub u8);
 
 impl AlgorithmId {

@@ -308,6 +308,79 @@ fn one_bit_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Everything a session is: the sound, the room, the melody, the pitch.
+/// Saved as `state.json` on exit, restored on launch; the same shape is a
+/// named preset when saved into the presets directory.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct SavedState {
+    patch: Patch,
+    verb: VerbParams,
+    melody: MelodyParams,
+    drone_hz: f32,
+}
+
+/// Presets and state live beside the assets when run from the workspace,
+/// or in ./presets beside a shipped binary.
+fn preset_dir() -> std::path::PathBuf {
+    if std::path::Path::new("crates/fibonacci-gui").is_dir() {
+        "crates/fibonacci-gui/presets".into()
+    } else {
+        "presets".into()
+    }
+}
+
+/// Clamp everything a loaded file could get wrong. A hand-edited or
+/// corrupted preset must never put the engine outside its documented
+/// ranges.
+fn sanitize(mut s: SavedState) -> SavedState {
+    if !ALGORITHMS.contains(&s.patch.algorithm) {
+        s.patch = Patch::init(ALGORITHMS[0], s.patch.ratio_mode);
+    }
+    s.patch.feedback = s.patch.feedback.clamp(0.0, 1.0);
+    s.patch.index = s.patch.index.clamp(0.0, 1.0);
+    s.patch.rip = s.patch.rip.clamp(0.0, 1.0);
+    s.patch.master_level = s.patch.master_level.clamp(0.0, 1.0);
+    s.patch.glide_seconds = s.patch.glide_seconds.clamp(0.0, 30.0);
+    for op in s.patch.ops.iter_mut() {
+        op.level = op.level.clamp(0.0, 1.0);
+        op.ratio = op.ratio.clamp(0.01, 64.0);
+        op.detune_cents = op.detune_cents.clamp(-1200.0, 1200.0);
+    }
+    s.verb.mix = s.verb.mix.clamp(0.0, 1.0);
+    s.verb.ghost = s.verb.ghost.clamp(0.0, 1.0);
+    s.verb.rt60 = s.verb.rt60.clamp(0.05, 60.0);
+    s.verb.damp = s.verb.damp.clamp(0.0, 0.99);
+    s.verb.haunt = s.verb.haunt.clamp(0.0, 1.0);
+    s.melody.rate_hz = s.melody.rate_hz.clamp(0.1, 8.0);
+    s.melody.range_degrees = s.melody.range_degrees.clamp(1, 13);
+    s.melody.root_midi = s.melody.root_midi.clamp(24, 57);
+    s.drone_hz = s.drone_hz.clamp(27.5, 440.0);
+    s
+}
+
+fn load_saved(path: &std::path::Path) -> Option<SavedState> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok().map(sanitize)
+}
+
+fn scan_presets() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(preset_dir())
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.strip_suffix(".json")
+                        .filter(|n| *n != "state")
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
 fn load_voice_lines() -> Vec<String> {
     for path in [
         "crates/fibonacci-gui/assets/voice.txt",
@@ -343,18 +416,30 @@ struct App {
     voice_last_reload: f64,
     frame_count: u64,
     drone_hz: f32,
+    preset_name: String,
+    preset_names: Vec<String>,
+    restored: bool,
 }
 
 impl App {
     fn new() -> Result<Self> {
-        let shadow = Patch::init(ALGORITHMS[0], RatioMode::default());
-        let shadow_verb = VerbParams::default();
+        // Restore the last session if it exists; otherwise stock defaults.
+        let restored_state = load_saved(&preset_dir().join("state.json"));
+        let restored = restored_state.is_some();
+        let state = restored_state.unwrap_or(SavedState {
+            patch: Patch::init(ALGORITHMS[0], RatioMode::default()),
+            verb: VerbParams::default(),
+            melody: MelodyParams::default(),
+            drone_hz: START_HZ,
+        });
+        let shadow = state.patch;
+        let shadow_verb = state.verb;
         let rig = start_audio(shadow, shadow_verb)?;
         let mut app = App {
             rig,
             shadow,
             shadow_verb,
-            shadow_melody: MelodyParams::default(),
+            shadow_melody: state.melody,
             start: Instant::now(),
             env: [0.0; NUM_OPS],
             scope: VecDeque::with_capacity(1024),
@@ -366,8 +451,16 @@ impl App {
             voice_last_advance: 0.0,
             voice_last_reload: 0.0,
             frame_count: 0,
-            drone_hz: START_HZ,
+            drone_hz: state.drone_hz,
+            preset_name: String::new(),
+            preset_names: scan_presets(),
+            restored,
         };
+        if app.restored {
+            app.send_melody();
+            let _ = app.rig.ctrl_tx.push(Event::GlideTo(app.drone_hz));
+            app.push_log("previous session restored from state.json.".into());
+        }
         let compiled = compile(app.shadow.algorithm);
         app.push_log(format!(
             "audio out: {} @ {} hz. drone begins at {} hz.",
@@ -401,6 +494,67 @@ impl App {
 
     fn send_melody(&mut self) {
         let _ = self.rig.ctrl_tx.push(Event::SetMelody(self.shadow_melody));
+    }
+
+    fn current_state(&self) -> SavedState {
+        SavedState {
+            patch: self.shadow,
+            verb: self.shadow_verb,
+            melody: self.shadow_melody,
+            drone_hz: self.drone_hz,
+        }
+    }
+
+    fn save_preset(&mut self, name: &str) {
+        let file: String = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let dir = preset_dir();
+        if std::fs::create_dir_all(&dir).is_err() {
+            self.push_log("preset directory could not be created.".into());
+            return;
+        }
+        let path = dir.join(format!("{file}.json"));
+        match serde_json::to_string_pretty(&self.current_state()) {
+            Ok(json) => match std::fs::write(&path, json) {
+                Ok(()) => {
+                    self.preset_names = scan_presets();
+                    self.push_log(format!("preset '{file}' written."));
+                }
+                Err(e) => self.push_log(format!("preset write failed: {e}.")),
+            },
+            Err(e) => self.push_log(format!("preset serialize failed: {e}.")),
+        }
+    }
+
+    fn load_preset(&mut self, name: &str) {
+        let path = preset_dir().join(format!("{name}.json"));
+        match load_saved(&path) {
+            Some(s) => {
+                self.shadow = s.patch;
+                self.shadow_verb = s.verb;
+                self.shadow_melody = s.melody;
+                self.drone_hz = s.drone_hz;
+                self.send_patch();
+                self.send_verb();
+                self.send_melody();
+                let _ = self.rig.ctrl_tx.push(Event::GlideTo(self.drone_hz));
+                self.push_log(format!(
+                    "preset '{name}' loaded. algorithm {} / {}, {:.1} hz.",
+                    ROMAN[algorithm_index(&self.shadow)],
+                    mode_name(self.shadow.ratio_mode),
+                    self.drone_hz
+                ));
+            }
+            None => self.push_log(format!("preset '{name}' unreadable — ignored.")),
+        }
     }
 
     fn set_algorithm(&mut self, idx: usize) {
@@ -659,6 +813,14 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let dir = preset_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(json) = serde_json::to_string_pretty(&self.current_state()) {
+            let _ = std::fs::write(dir.join("state.json"), json);
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.frame_count += 1;
         self.drain_viz();
@@ -680,7 +842,7 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("BLOW YOUR PHASE OFF")
+                    egui::RichText::new(concat!("BLOW YOUR PHASE OFF v", env!("CARGO_PKG_VERSION")))
                         .font(FontId::monospace(16.0))
                         .color(WHITE),
                 );
@@ -973,6 +1135,31 @@ impl eframe::App for App {
             if verb_changed {
                 self.send_verb();
             }
+            ui.add_space(6.0);
+            Self::inverted_strip(ui, "PRESETS");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.preset_name)
+                        .hint_text("name")
+                        .desired_width(150.0),
+                );
+                if ui.button("SAVE").clicked() {
+                    let name = self.preset_name.trim().to_string();
+                    if name.is_empty() {
+                        self.push_log("a preset needs a name.".into());
+                    } else {
+                        self.save_preset(&name);
+                    }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                let names = self.preset_names.clone();
+                for name in names {
+                    if ui.button(&name).clicked() {
+                        self.load_preset(&name);
+                    }
+                }
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {

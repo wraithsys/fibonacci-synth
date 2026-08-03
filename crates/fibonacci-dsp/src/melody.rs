@@ -56,6 +56,7 @@ const FIB_HZ: [f32; 10] = [
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Scale {
     Phrygian,
     PhrygianDominant,
@@ -109,6 +110,7 @@ impl Scale {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Tuning {
     Scale,
     FibonacciHz,
@@ -139,6 +141,7 @@ impl Tuning {
 
 /// Where the sample-and-hold draws its values. Both are deterministic.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum HoldSource {
     /// `x ← (x + 1/φ) mod 1`: equidistributed, aperiodic, golden.
     GoldenWeyl,
@@ -147,6 +150,7 @@ pub enum HoldSource {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MelodyParams {
     pub enabled: bool,
     pub tuning: Tuning,

@@ -55,6 +55,7 @@ const ALLPASS_G: f32 = 1.0 / PHI;
 
 /// User-facing reverb parameters.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbParams {
     /// Wet/dry, 0..=1. 0 = fully dry.
     pub mix: f32,
