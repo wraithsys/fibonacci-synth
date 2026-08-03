@@ -52,6 +52,16 @@ const MAX_DELAY_SECONDS: f32 = 0.08;
 const ALLPASS_SECONDS: [f32; 2] = [0.0051, 0.0051 / PHI];
 /// Allpass coefficient: 1/φ = φ − 1.
 const ALLPASS_G: f32 = 1.0 / PHI;
+/// Gain staging for a drone-fed reverb (Freeverb-style): fixed attenuation
+/// into the comb bank, fixed makeup after diffusion. rt60 changes decay
+/// TIME only — it must never scale loudness downward (an earlier fix
+/// normalized comb output by √(1−g), which made long rt60 *quieter*:
+/// wrong feel, found by ear 2026-08-03).
+const COMB_INPUT_GAIN: f32 = 0.06;
+const WET_MAKEUP_GAIN: f32 = 2.5;
+/// Feedback ceiling: bounds worst-case standing-wave buildup so sustained
+/// resonance growls into the tanh ceiling instead of pinning it.
+const MAX_FB: f32 = 0.985;
 
 /// User-facing reverb parameters.
 #[derive(Clone, Copy, Debug)]
@@ -113,7 +123,7 @@ impl Comb {
     }
 
     fn set_rt60(&mut self, rt60: f32) {
-        self.fb = 0.001f32.powf(self.delay_seconds / rt60.max(0.05));
+        self.fb = 0.001f32.powf(self.delay_seconds / rt60.max(0.05)).min(MAX_FB);
     }
 
     fn process(&mut self, x: f32, damp: f32) -> f32 {
@@ -122,12 +132,7 @@ impl Comb {
         self.lp = y + damp * (self.lp - y);
         self.buf[self.write] = x + self.lp * self.fb;
         self.write = (self.write + 1) % self.buf.len();
-        // Partial gain normalization: a comb resonates at up to 1/(1-g),
-        // and this instrument feeds it standing waves, not transients —
-        // unnormalized, long rt60 becomes raw gain and the bus clips
-        // (audibly "clicky"; found by ear 2026-08-03). The sqrt keeps some
-        // resonant bloom while bounding the explosion.
-        y * (1.0 - self.fb).sqrt()
+        y
     }
 }
 
@@ -291,11 +296,11 @@ impl StereoVerb {
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
-            let x = sends[i] + self.params.haunt * haunted[from];
+            let x = (sends[i] + self.params.haunt * haunted[from]) * COMB_INPUT_GAIN;
             wet_l += self.combs_l[i].process(x, self.params.damp);
             wet_r += self.combs_r[i].process(x, self.params.damp);
         }
-        let scale = 1.0 / NUM_OPS as f32;
+        let scale = WET_MAKEUP_GAIN / NUM_OPS as f32;
         wet_l *= scale;
         wet_r *= scale;
         for ap in self.ap_l.iter_mut() {
@@ -436,6 +441,36 @@ mod tests {
             }
         }
         assert!(diverged, "haunt 1.0 made no difference at all");
+    }
+
+    /// rt60 changes decay time, not loudness: sustained input at long rt60
+    /// must never be quieter than at short rt60 (the regression that
+    /// √(1−g) output normalization introduced).
+    #[test]
+    fn longer_rt60_is_never_quieter() {
+        let rms_at = |rt60: f32| {
+            let mut verb = configured(RatioMode::Golden);
+            verb.set_params(VerbParams {
+                mix: 1.0,
+                rt60,
+                ..VerbParams::default()
+            });
+            let mut acc = 0.0f64;
+            for n in 0..192_000 {
+                let x = (core::f32::consts::TAU * 110.0 * n as f32 / SR).sin() * 0.3;
+                let (l, r) = verb.process(&impulse_frame(x));
+                if n >= 96_000 {
+                    acc += (l * l + r * r) as f64;
+                }
+            }
+            (acc / 96_000.0).sqrt()
+        };
+        let short = rms_at(1.0);
+        let long = rms_at(8.0);
+        assert!(
+            long >= short * 0.8,
+            "long rt60 must not be quieter (short {short}, long {long})"
+        );
     }
 
     #[test]

@@ -199,11 +199,15 @@ filters, one per ear:
   with a one-pole lowpass in each loop (`damp`) for high-frequency rolloff.
 - **Gain honesty**: a comb resonates at up to `1/(1−g)`, and this
   instrument feeds its reverb standing waves, not transients — so
-  unnormalized, long rt60 becomes raw gain and the bus hard-clips (audible
-  as clicking; found by ear). Comb outputs are therefore normalized by
-  `√(1−g)`, and the wet bus saturates smoothly (`tanh`): a haunted room may
-  growl, it may not click. The dry path carries no compression or
-  saturation, ever.
+  unstaged, long rt60 becomes raw gain and the bus hard-clips (audible as
+  clicking; found by ear). The staging is Freeverb-style: fixed
+  attenuation into the comb bank (0.06), fixed makeup after diffusion
+  (2.5), feedback capped at 0.985, and the wet bus saturating smoothly
+  (`tanh`). rt60 therefore changes decay *time* only, never loudness —
+  an earlier √(1−g) output normalization made long rt60 quieter, which is
+  the wrong feel and was removed. Sustained resonance at extreme settings
+  growls into the ceiling; it may not click. The dry path carries no
+  compression or saturation, ever.
 - On an algorithm/mode change the delay *taps* move but the buffers keep
   their contents: the previous structure's tail briefly haunts the new one.
 
