@@ -58,7 +58,11 @@ const ALLPASS_G: f32 = 1.0 / PHI;
 /// normalized comb output by √(1−g), which made long rt60 *quieter*:
 /// wrong feel, found by ear 2026-08-03).
 const COMB_INPUT_GAIN: f32 = 0.06;
-const WET_MAKEUP_GAIN: f32 = 5.0;
+/// Tuned empirically with examples/verb_probe.rs: full-wet RMS should sit
+/// near dry RMS for sustained tonal input (drones live off-resonance, so
+/// the comb bank's average gain is far below its resonant peak — the
+/// arithmetic guesses of 2.5 and 5.0 left the Room 14 dB underwater).
+const WET_MAKEUP_GAIN: f32 = 25.0;
 /// Feedback ceiling: bounds worst-case standing-wave buildup so sustained
 /// resonance growls into the tanh ceiling instead of pinning it.
 const MAX_FB: f32 = 0.985;
