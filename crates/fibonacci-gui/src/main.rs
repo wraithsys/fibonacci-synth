@@ -833,6 +833,16 @@ impl App {
         });
     }
 
+    /// A small bordered chip for the header strip (WoH top-bar style).
+    fn header_chip(ui: &mut egui::Ui, text: &str) {
+        egui::Frame::none()
+            .stroke(Stroke::new(1.0_f32, WHITE))
+            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(text).color(WHITE));
+            });
+    }
+
     fn inverted_strip(ui: &mut egui::Ui, text: &str) {
         egui::Frame::none().fill(WHITE).inner_margin(4.0).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -870,20 +880,23 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                let t = self.start.elapsed().as_secs();
+                Self::header_chip(ui, &format!("{:02}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60));
                 ui.label(
-                    egui::RichText::new(concat!("BLOW YOUR PHASE OFF v", env!("CARGO_PKG_VERSION")))
+                    egui::RichText::new("BLOW YOUR PHASE OFF")
                         .font(FontId::monospace(16.0))
                         .color(WHITE),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    Self::header_chip(ui, concat!("v", env!("CARGO_PKG_VERSION")));
+                    Self::header_chip(ui, &format!("{:.0}k", self.rig.sample_rate / 1000.0));
+                    if self.rig.midi_connected {
+                        Self::header_chip(ui, "midi");
+                    }
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} @ {:.0} hz {}",
-                            self.rig.device_name,
-                            self.rig.sample_rate,
-                            if self.rig.midi_connected { "· midi in" } else { "" }
-                        ))
-                        .color(WHITE),
+                        egui::RichText::new(&self.rig.device_name)
+                            .color(WHITE)
+                            .font(FontId::monospace(11.0)),
                     );
                 });
             });
