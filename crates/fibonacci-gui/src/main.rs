@@ -827,6 +827,20 @@ impl App {
             center + Vec2::new(a.cos(), a.sin()) * radius
         };
         let haunt = self.shadow_verb.haunt;
+        // String-art web (the sigil): chords k -> 2k around a 21-point
+        // circle (21 = F(8)) — the cardioid construction. Absent at haunt 0,
+        // one chord revealed at a time until the full web stands.
+        const WEB_POINTS: usize = 21;
+        let circle_pt = |t: f32| {
+            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * t;
+            center + Vec2::new(a.cos(), a.sin()) * radius
+        };
+        let chords = (haunt * WEB_POINTS as f32) as usize;
+        for k in 1..=chords {
+            let a = circle_pt(k as f32 / WEB_POINTS as f32);
+            let b = circle_pt((k * 2 % WEB_POINTS) as f32 / WEB_POINTS as f32);
+            painter.line_segment([a, b], Stroke::new(1.0_f32, WHITE));
+        }
         for i in 0..5 {
             let from = point(i);
             let to = point((i + 3) % 5);
