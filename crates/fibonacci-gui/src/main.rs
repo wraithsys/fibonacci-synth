@@ -848,6 +848,68 @@ impl App {
         }
     }
 
+    /// An analog-scope graticule: dotted division grid, denser center axes
+    /// with tick marks. Subtle by construction — the beam owns the display.
+    fn draw_graticule(painter: &egui::Painter, rect: Rect, cols: usize, rows: usize) {
+        let dot = |p: Pos2| {
+            painter.rect_filled(Rect::from_center_size(p, Vec2::splat(1.0)), Rounding::ZERO, WHITE)
+        };
+        for c in 1..cols {
+            let x = rect.min.x + rect.width() * c as f32 / cols as f32;
+            let step = if c * 2 == cols { 5.0 } else { 9.0 };
+            let mut y = rect.min.y;
+            while y < rect.max.y {
+                dot(Pos2::new(x, y));
+                y += step;
+            }
+        }
+        for r in 1..rows {
+            let y = rect.min.y + rect.height() * r as f32 / rows as f32;
+            let step = if r * 2 == rows { 5.0 } else { 9.0 };
+            let mut x = rect.min.x;
+            while x < rect.max.x {
+                dot(Pos2::new(x, y));
+                x += step;
+            }
+        }
+        // Tick marks along the center axes, one per division.
+        let cy = rect.center().y;
+        for c in 0..=cols {
+            let x = rect.min.x + rect.width() * c as f32 / cols as f32;
+            painter.line_segment(
+                [Pos2::new(x, cy - 2.0), Pos2::new(x, cy + 2.0)],
+                Stroke::new(1.0_f32, WHITE),
+            );
+        }
+        let cx = rect.center().x;
+        for r in 0..=rows {
+            let y = rect.min.y + rect.height() * r as f32 / rows as f32;
+            painter.line_segment(
+                [Pos2::new(cx - 2.0, y), Pos2::new(cx + 2.0, y)],
+                Stroke::new(1.0_f32, WHITE),
+            );
+        }
+    }
+
+    /// A phosphor-style beam segment: 2px core plus a sparse dithered halo.
+    fn beam_segment(painter: &egui::Painter, a: Pos2, b: Pos2, k: usize, decayed: bool) {
+        if decayed {
+            // Old trace: broken segments, like phosphor letting go.
+            if k % 2 == 0 {
+                painter.line_segment([a, b], Stroke::new(1.0_f32, WHITE));
+            }
+            return;
+        }
+        painter.line_segment([a, b], Stroke::new(2.0_f32, WHITE));
+        let off = Vec2::new(0.0, 2.0);
+        if k % 2 == 0 {
+            painter.line_segment([a + off, b + off], Stroke::new(1.0_f32, WHITE));
+        }
+        if k % 3 == 0 {
+            painter.line_segment([a - off, b - off], Stroke::new(1.0_f32, WHITE));
+        }
+    }
+
     fn draw_scopes(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let (resp, painter) = ui.allocate_painter(
@@ -858,6 +920,7 @@ impl App {
             painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
             let inner = rect.shrink(4.0);
             let painter = painter.with_clip_rect(inner);
+            Self::draw_graticule(&painter, inner, 10, 4);
             if self.scope.len() > 2 {
                 let n = self.scope.len();
                 let mut prev: Option<Pos2> = None;
@@ -867,7 +930,7 @@ impl App {
                         inner.center().y - s.clamp(-1.0, 1.0) * inner.height() * 0.5,
                     );
                     if let Some(q) = prev {
-                        painter.line_segment([q, p], Stroke::new(1.0_f32, WHITE));
+                        Self::beam_segment(&painter, q, p, i, false);
                     }
                     prev = Some(p);
                 }
@@ -879,15 +942,18 @@ impl App {
             painter2.rect_stroke(rect2, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
             let inner2 = rect2.shrink(4.0);
             let painter2 = painter2.with_clip_rect(inner2);
+            Self::draw_graticule(&painter2, inner2, 6, 6);
             let c = inner2.center();
             let scale = inner2.height() * 0.5;
+            let n = self.lissajous.len().max(1);
             let mut prev: Option<Pos2> = None;
-            for &(l, r) in self.lissajous.iter() {
+            for (i, &(l, r)) in self.lissajous.iter().enumerate() {
                 let x = (l - r) * std::f32::consts::FRAC_1_SQRT_2;
                 let y = (l + r) * std::f32::consts::FRAC_1_SQRT_2;
                 let p = c + Vec2::new(x, -y) * scale;
                 if let Some(q) = prev {
-                    painter2.line_segment([q, p], Stroke::new(1.5_f32, WHITE));
+                    // Oldest third of the trace decays — phosphor persistence.
+                    Self::beam_segment(&painter2, q, p, i, i < n / 3);
                 }
                 prev = Some(p);
             }
