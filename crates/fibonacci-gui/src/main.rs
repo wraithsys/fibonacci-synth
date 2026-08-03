@@ -249,6 +249,33 @@ fn dither_rect(painter: &egui::Painter, rect: Rect, density: f32, cell: f32) {
     }
 }
 
+/// Schlappi-style connector: a chain of small circles with smoothly
+/// undulating radii instead of a plain line. `active` chains are full
+/// bubble trails; dormant ones decay to sparse dots.
+fn bubble_chain(painter: &egui::Painter, a: Pos2, b: Pos2, active: bool) {
+    let span = b - a;
+    let len = span.length();
+    if len < 4.0 {
+        return;
+    }
+    let spacing = if active { 7.0 } else { 10.0 };
+    let n = ((len / spacing).ceil() as usize).max(2);
+    for k in 0..=n {
+        let t = k as f32 / n as f32;
+        let p = a + span * t;
+        if active {
+            let r = 1.3 + 1.4 * (0.5 + 0.5 * (k as f32 * 0.9 + len * 0.13).sin());
+            painter.circle_stroke(p, r, Stroke::new(1.0_f32, WHITE));
+        } else {
+            painter.rect_filled(
+                Rect::from_center_size(p, Vec2::splat(1.5)),
+                Rounding::ZERO,
+                WHITE,
+            );
+        }
+    }
+}
+
 fn dither_circle(painter: &egui::Painter, center: Pos2, radius: f32, density: f32, cell: f32) {
     if density <= 0.0 {
         return;
@@ -716,14 +743,23 @@ impl App {
         let nodes = [at(0.50, 0.10), at(0.30, 0.34), at(0.16, 0.58), at(0.74, 0.34)];
         let leaves = [at(0.08, 0.86), at(0.26, 0.86), at(0.44, 0.62), at(0.64, 0.64), at(0.86, 0.64)];
         let stroke = Stroke::new(1.0_f32, WHITE);
-        painter.line_segment([nodes[0], nodes[1]], stroke);
-        painter.line_segment([nodes[0], nodes[3]], stroke);
-        painter.line_segment([nodes[1], nodes[2]], stroke);
-        painter.line_segment([nodes[1], leaves[2]], stroke);
-        painter.line_segment([nodes[2], leaves[0]], stroke);
-        painter.line_segment([nodes[2], leaves[1]], stroke);
-        painter.line_segment([nodes[3], leaves[3]], stroke);
-        painter.line_segment([nodes[3], leaves[4]], stroke);
+        let inset = |from: Pos2, to: Pos2, margin_a: f32, margin_b: f32| {
+            let dir = (to - from).normalized();
+            (from + dir * margin_a, to - dir * margin_b)
+        };
+        for (from, to, m_to) in [
+            (nodes[0], nodes[1], 11.0),
+            (nodes[0], nodes[3], 11.0),
+            (nodes[1], nodes[2], 11.0),
+            (nodes[1], leaves[2], 9.0),
+            (nodes[2], leaves[0], 9.0),
+            (nodes[2], leaves[1], 9.0),
+            (nodes[3], leaves[3], 9.0),
+            (nodes[3], leaves[4], 9.0),
+        ] {
+            let (a, b) = inset(from, to, 11.0, m_to);
+            bubble_chain(&painter, a, b, true);
+        }
 
         let idx = algorithm_index(&self.shadow);
         // Which node flips to reach the neighbouring roster algorithms?
@@ -794,19 +830,8 @@ impl App {
         for i in 0..5 {
             let from = point(i);
             let to = point((i + 3) % 5);
-            if haunt > 0.0 {
-                painter.line_segment([from, to], Stroke::new(1.0_f32, WHITE));
-            } else {
-                // Dormant: dotted.
-                let steps = 14;
-                for s in 0..steps {
-                    if s % 2 == 0 {
-                        let a = from + (to - from) * (s as f32 / steps as f32);
-                        let b = from + (to - from) * ((s as f32 + 0.6) / steps as f32);
-                        painter.line_segment([a, b], Stroke::new(1.0_f32, WHITE));
-                    }
-                }
-            }
+            let dir = (to - from).normalized();
+            bubble_chain(&painter, from + dir * 9.0, to - dir * 9.0, haunt > 0.0);
         }
         for i in 0..5 {
             let p = point(i);
