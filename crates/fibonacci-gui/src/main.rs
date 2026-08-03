@@ -635,28 +635,35 @@ impl App {
         }
     }
 
-    /// The Monolith: a golden spiral, vertices displaced by the live side
-    /// signal, segments broken as rip/haunt rise. Serene when the phase is
-    /// coherent; cracked when it is not.
+    /// The Logalith: a logarithmic spiral, vertices displaced by the live
+    /// side signal, segments broken as rip/haunt rise. Serene when the
+    /// phase is coherent; cracked when it is not.
+    ///
+    /// Growth rate is the chambered nautilus's ≈3× per whorl — NOT φ per
+    /// quarter-turn (×6.85 per whorl), which is the famous myth and also
+    /// collapses every inner whorl into a dot on screen. The φ in this
+    /// creature lives in its septa placement (golden-angle stations) and
+    /// everywhere else in the instrument.
     fn draw_monolith(&self, painter: &egui::Painter, rect: Rect) {
         let center = rect.center();
         let max_r = rect.width().min(rect.height()) * 0.44;
-        let phi = fibonacci_dsp::PHI;
+        const GROWTH_PER_WHORL: f32 = 3.0;
+        let tau = std::f32::consts::TAU;
         let turns = 3.25_f32;
-        let theta_max = turns * std::f32::consts::TAU;
+        let theta_max = turns * tau;
+        let r_at = |theta: f32| max_r * GROWTH_PER_WHORL.powf((theta - theta_max) / tau);
         let violence = (self.shadow.rip + self.shadow_verb.haunt).min(1.5);
-        let n = 340;
+        let n = 420;
         let mut prev: Option<Pos2> = None;
         for k in 0..=n {
             let theta = theta_max * k as f32 / n as f32;
-            let r = max_r * phi.powf((theta - theta_max) / (std::f32::consts::PI / 2.0));
             let side = if self.side.is_empty() {
                 0.0
             } else {
                 self.side[(k * 7 + self.frame_count as usize) % self.side.len()]
             };
             let jitter = side * max_r * 0.35 * (0.15 + violence);
-            let rr = (r + jitter).max(0.0);
+            let rr = (r_at(theta) + jitter).max(0.0);
             let p = center + Vec2::new(theta.cos(), theta.sin()) * rr;
             if let Some(q) = prev {
                 // Cracks: segments drop out as phase violence rises.
@@ -669,16 +676,28 @@ impl App {
             }
             prev = Some(p);
         }
-        // Chamber walls: radial spokes at golden-angle spacing, ditherable.
-        let golden_angle = std::f32::consts::TAU * (1.0 - 1.0 / phi);
-        for s in 0..5 {
-            let a = s as f32 * golden_angle + self.frame_count as f32 * 0.0006;
+        // Septa: one chamber wall per operator, spanning adjacent whorls at
+        // golden-angle stations, drawn as a dotted chain that thickens with
+        // the operator's live level. Bounded by the shell — nothing sticks
+        // out of the animal.
+        let golden_angle = tau * (1.0 - 1.0 / fibonacci_dsp::PHI);
+        for s in 0..NUM_OPS {
+            let a = (s as f32 * golden_angle) % tau;
+            let theta = a + tau; // the mid-shell whorl crossing
+            let r1 = r_at(theta);
+            let r2 = r_at(theta + tau).min(max_r * 0.9);
             let dir = Vec2::new(a.cos(), a.sin());
             let amp = self.env[s].min(1.0);
-            painter.line_segment(
-                [center + dir * max_r * 0.08, center + dir * max_r * (0.12 + 0.5 * amp)],
-                Stroke::new(1.0_f32, WHITE),
-            );
+            let dots = 3 + (amp * 9.0) as usize;
+            for d in 0..=dots {
+                let t = d as f32 / dots as f32;
+                let p = center + dir * (r1 + (r2 - r1) * t);
+                painter.rect_filled(
+                    Rect::from_center_size(p, Vec2::splat(2.0)),
+                    Rounding::ZERO,
+                    WHITE,
+                );
+            }
         }
     }
 
@@ -805,14 +824,16 @@ impl App {
                 Sense::hover(),
             );
             let rect = resp.rect;
-            painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+            painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+            let inner = rect.shrink(4.0);
+            let painter = painter.with_clip_rect(inner);
             if self.scope.len() > 2 {
                 let n = self.scope.len();
                 let mut prev: Option<Pos2> = None;
                 for (i, &s) in self.scope.iter().enumerate() {
                     let p = Pos2::new(
-                        rect.min.x + rect.width() * i as f32 / n as f32,
-                        rect.center().y - s.clamp(-1.0, 1.0) * rect.height() * 0.46,
+                        inner.min.x + inner.width() * i as f32 / n as f32,
+                        inner.center().y - s.clamp(-1.0, 1.0) * inner.height() * 0.5,
                     );
                     if let Some(q) = prev {
                         painter.line_segment([q, p], Stroke::new(1.0_f32, WHITE));
@@ -820,21 +841,24 @@ impl App {
                     prev = Some(p);
                 }
             }
+            // The phase image: a connected beam, clipped to its box.
             let (resp2, painter2) =
                 ui.allocate_painter(Vec2::new(122.0, 72.0), Sense::hover());
             let rect2 = resp2.rect;
-            painter2.rect_stroke(rect2, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
-            let c = rect2.center();
-            let scale = rect2.height() * 0.46;
+            painter2.rect_stroke(rect2, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+            let inner2 = rect2.shrink(4.0);
+            let painter2 = painter2.with_clip_rect(inner2);
+            let c = inner2.center();
+            let scale = inner2.height() * 0.5;
+            let mut prev: Option<Pos2> = None;
             for &(l, r) in self.lissajous.iter() {
                 let x = (l - r) * std::f32::consts::FRAC_1_SQRT_2;
                 let y = (l + r) * std::f32::consts::FRAC_1_SQRT_2;
-                let p = c + Vec2::new(x.clamp(-1.0, 1.0), -y.clamp(-1.0, 1.0)) * scale;
-                painter2.rect_filled(
-                    Rect::from_min_size(p, Vec2::splat(1.5)),
-                    Rounding::ZERO,
-                    WHITE,
-                );
+                let p = c + Vec2::new(x, -y) * scale;
+                if let Some(q) = prev {
+                    painter2.line_segment([q, p], Stroke::new(1.5_f32, WHITE));
+                }
+                prev = Some(p);
             }
         });
     }
@@ -957,7 +981,7 @@ impl eframe::App for App {
             Self::inverted_strip(ui, "LOCAL φ INTEGRITY");
             let (resp, painter) =
                 ui.allocate_painter(Vec2::new(ui.available_width(), 14.0), Sense::hover());
-            painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+            painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
             let fill = resp.rect.shrink(2.0);
             dither_rect(
                 &painter,
@@ -1110,7 +1134,7 @@ impl eframe::App for App {
                     ui.label(format!("×{:<6.3}", self.shadow.ops[i].ratio));
                     let (resp, painter) =
                         ui.allocate_painter(Vec2::new(70.0, 12.0), Sense::hover());
-                    painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+                    painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
                     let inner = resp.rect.shrink(2.0);
                     dither_rect(
                         &painter,
@@ -1224,7 +1248,7 @@ impl eframe::App for App {
             let spiral_h = (ui.available_height() - 150.0).max(140.0);
             let (resp, painter) =
                 ui.allocate_painter(Vec2::new(ui.available_width(), spiral_h), Sense::hover());
-            painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+            painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
             self.draw_monolith(&painter, resp.rect);
 
             ui.horizontal(|ui| {

@@ -335,10 +335,15 @@ Strict 1-bit (white on black, hard rectangles, monospace), with dithering
 standing in for brightness everywhere — an operator's live output level is
 rendered as stipple density. Panels:
 
-- **The Logalith** (centerpiece): a golden logarithmic spiral whose
-  vertices are displaced by the live stereo side signal (L−R) and whose
-  segments crack out as rip + haunt rise. Coherent phase leaves the shell
-  serene; phase violence visibly breaks it.
+- **The Logalith** (centerpiece): a logarithmic spiral whose vertices are
+  displaced by the live stereo side signal (L−R) and whose segments crack
+  out as rip + haunt rise. Coherent phase leaves the shell serene; phase
+  violence visibly breaks it. Its growth rate is the chambered nautilus's
+  ≈3× per whorl — deliberately *not* φ per quarter-turn: the "nautilus is
+  a golden spiral" claim is a myth (the real animal grows ≈3×/whorl, φ
+  gives ≈6.85×), and this instrument doesn't ship myths. The φ lives in
+  the septa: one chamber wall per operator at golden-angle stations,
+  pulsing with that operator's live level.
 - **The tree**: the recursion structure, S/P glyphs per node, leaves
   stippled by live level. The blinking node is the one that flips to reach
   the neighbouring roster algorithm — clicking it moves along the
