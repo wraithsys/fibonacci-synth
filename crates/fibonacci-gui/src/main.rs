@@ -746,7 +746,7 @@ impl App {
     /// everywhere else in the instrument.
     fn draw_monolith(&self, painter: &egui::Painter, rect: Rect) {
         let center = rect.center();
-        let max_r = rect.width().min(rect.height()) * 0.44;
+        let max_r = rect.width().min(rect.height()) * 0.47;
         const GROWTH_PER_WHORL: f32 = 3.0;
         let tau = std::f32::consts::TAU;
         let turns = 3.25_f32;
@@ -1436,12 +1436,12 @@ impl eframe::App for App {
                     mode_name(self.shadow.ratio_mode).to_uppercase()
                 ),
             );
-            let spiral_h = (ui.available_height() - 150.0).max(140.0);
-            let (resp, painter) =
-                ui.allocate_painter(Vec2::new(ui.available_width(), spiral_h), Sense::hover());
-            painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
-            self.draw_monolith(&painter, resp.rect);
-
+            let body_h = ui.available_height();
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(330.0);
+                    ui.style_mut().spacing.slider_width = 150.0;
+                    ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let mut clicked: Option<usize> = None;
                 for (i, roman) in ROMAN.iter().enumerate() {
@@ -1485,38 +1485,35 @@ impl eframe::App for App {
                     self.shadow.rip
                 ));
             }
-            ui.horizontal(|ui| {
-                patch_changed |= ui
-                    .add(egui::Slider::new(&mut self.shadow.feedback, 0.0..=1.0).text("fb"))
-                    .changed();
-                patch_changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.shadow.master_level, 0.0..=1.0).text("master"),
-                    )
-                    .changed();
-            });
-            ui.horizontal(|ui| {
-                patch_changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.shadow.glide_seconds, 0.0..=2.0)
-                            .text("glide s"),
-                    )
-                    .changed();
-                let resp = ui.add(
-                    egui::Slider::new(&mut self.drone_hz, 27.5..=440.0)
-                        .logarithmic(true)
-                        .text("drone hz"),
-                );
-                if resp.changed() {
-                    let _ = self.rig.ctrl_tx.push(Event::GlideTo(self.drone_hz));
-                }
-            });
+            patch_changed |= ui
+                .add(egui::Slider::new(&mut self.shadow.feedback, 0.0..=1.0).text("fb"))
+                .changed();
+            patch_changed |= ui
+                .add(egui::Slider::new(&mut self.shadow.master_level, 0.0..=1.0).text("master"))
+                .changed();
+            patch_changed |= ui
+                .add(egui::Slider::new(&mut self.shadow.glide_seconds, 0.0..=2.0).text("glide s"))
+                .changed();
+            let resp = ui.add(
+                egui::Slider::new(&mut self.drone_hz, 27.5..=440.0)
+                    .logarithmic(true)
+                    .text("drone hz"),
+            );
+            if resp.changed() {
+                let _ = self.rig.ctrl_tx.push(Event::GlideTo(self.drone_hz));
+            }
             if patch_changed {
                 self.send_patch();
             }
             if let Some(line) = log_line {
                 self.push_log(line);
             }
+                });
+                let (resp, painter) =
+                    ui.allocate_painter(Vec2::new(ui.available_width(), body_h), Sense::hover());
+                painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+                self.draw_monolith(&painter, resp.rect);
+            });
         });
     }
 }
