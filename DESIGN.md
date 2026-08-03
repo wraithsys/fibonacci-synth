@@ -46,6 +46,36 @@ Monologalith — too close to the Korg Monologue).
   lines + curve, since the diagrams are the reference that got the "umm
   this").
 
+## The instrument disapproves (Billy's discouragement design)
+
+BYPO takes the opposite of the usual synth ethos: build complete
+infrastructure for pushing limits, then *actively discourage* using it.
+Esoteric and malleable, but reluctant. Fear of pushing past the limit is a
+designed feeling, delivered diegetically.
+
+**The prime rule: discouragement is presentational, never functional.**
+No control resists, no audio degrades, nothing is gated. Sound is sacred.
+The player is always allowed everything; the instrument just *notices*.
+
+Mechanics (all data-driven, Billy authors the content):
+
+- **Graduated integrity states**: the voice pools switch by measured state.
+  `integrity_low.txt` (< 50%) is live; further bands to add:
+  `integrity_critical.txt` (< 15%), possibly a mild `integrity_warn.txt`
+  (< 75%). Thresholds get hysteresis so states don't flicker cheaply.
+- **The log stays sphexish**: measurements only, but their *cadence* rises
+  with violence — the maintenance routine reporting more often is the
+  closest a routine gets to alarm.
+- **Visual dread**: already partly built (the Logalith cracks, φ-INTEGRITY
+  drains). Extend: slider/control trembles at critical integrity (the
+  controls that caused it), pentagram densification. Purely visual.
+- **Forgiveness**: integrity recovers when the player relents — the
+  instrument never holds a grudge, which is precisely what makes pushing
+  it again feel like a choice.
+
+Slots after the Room verdict + bubble-chains; content (the pools) belongs
+to the content-lock phase.
+
 ## Implementation order (design pass)
 
 1. Feathering off + pixel-snap pass (done with the rename)
