@@ -70,6 +70,16 @@ const MAX_FB: f32 = 0.985;
 /// 48 kHz). Every user parameter glides: instant jumps on charged delay
 /// lines are audible clicks — the "mix is clicky" bug was zipper noise.
 const PARAM_SMOOTH: f32 = 0.0014;
+/// Tap modulation: a static source cannot freeze a moving room. Without
+/// internal motion, a drone through a comb bank converges to fixed
+/// coloration — at long rt60 the modes narrow, lock onto the stationary
+/// partials, and the *reverberation percept* dies while RMS stays flat
+/// (found by ear: "rt60 kills the reverb"; the probe measured constant
+/// level and missed the motionlessness). Cure, as in every studio reverb:
+/// each comb tap breathes a few samples at an infra-rate LFO —
+/// golden-staggered rates, fractional reads, ±ppm pitch wobble.
+const MOD_DEPTH_SAMPLES: f32 = 9.0;
+const MOD_BASE_HZ: f32 = 0.31;
 
 /// User-facing reverb parameters.
 #[derive(Clone, Copy, Debug)]
@@ -113,10 +123,12 @@ struct Comb {
     fb: f32,
     fb_target: f32,
     lp: f32,
+    lfo_phase: f32,
+    lfo_inc: f32,
 }
 
 impl Comb {
-    fn new(len: usize) -> Self {
+    fn new(len: usize, lfo_inc: f32, lfo_phase: f32) -> Self {
         Comb {
             buf: vec![0.0; len],
             write: 0,
@@ -125,6 +137,8 @@ impl Comb {
             fb: 0.0,
             fb_target: 0.0,
             lp: 0.0,
+            lfo_phase,
+            lfo_inc,
         }
     }
 
@@ -139,8 +153,18 @@ impl Comb {
 
     fn process(&mut self, x: f32, damp: f32) -> f32 {
         self.fb += PARAM_SMOOTH * (self.fb_target - self.fb);
-        let read = (self.write + self.buf.len() - self.delay) % self.buf.len();
-        let y = self.buf[read];
+        self.lfo_phase += self.lfo_inc;
+        if self.lfo_phase >= 1.0 {
+            self.lfo_phase -= 1.0;
+        }
+        let wobble = (core::f32::consts::TAU * self.lfo_phase).sin() * MOD_DEPTH_SAMPLES;
+        let len = self.buf.len();
+        let d = (self.delay as f32 + wobble).clamp(1.0, (len - 2) as f32);
+        let di = d as usize;
+        let frac = d - di as f32;
+        let i0 = (self.write + len - di) % len;
+        let i1 = (self.write + len - di - 1) % len;
+        let y = self.buf[i0] * (1.0 - frac) + self.buf[i1] * frac;
         self.lp = y + damp * (self.lp - y);
         self.buf[self.write] = x + self.lp * self.fb;
         self.write = (self.write + 1) % self.buf.len();
@@ -253,8 +277,18 @@ impl StereoVerb {
             damp_s: defaults.damp,
             send: [1.0; NUM_OPS],
             is_carrier: [true; NUM_OPS],
-            combs_l: (0..NUM_OPS).map(|_| Comb::new(len)).collect(),
-            combs_r: (0..NUM_OPS).map(|_| Comb::new(len)).collect(),
+            combs_l: (0..NUM_OPS)
+                .map(|i| {
+                    let rate = MOD_BASE_HZ * PHI.powf(-0.5 * i as f32);
+                    Comb::new(len, rate / sample_rate, 0.19 * i as f32)
+                })
+                .collect(),
+            combs_r: (0..NUM_OPS)
+                .map(|i| {
+                    let rate = MOD_BASE_HZ * PHI.powf(-0.5 * i as f32);
+                    Comb::new(len, rate / sample_rate, 0.19 * i as f32 + 0.37)
+                })
+                .collect(),
             ap_l: ALLPASS_SECONDS.iter().map(|&s| Allpass::new(s, sample_rate)).collect(),
             ap_r: ALLPASS_SECONDS.iter().map(|&s| Allpass::new(s, sample_rate)).collect(),
             ghosts: (0..NUM_OPS).map(|_| GhostLine::new(ghost_len, ghost_a)).collect(),

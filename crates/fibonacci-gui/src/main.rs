@@ -416,12 +416,11 @@ fn scan_presets() -> Vec<String> {
     names
 }
 
-fn load_voice_lines() -> Vec<String> {
-    for path in [
-        "crates/fibonacci-gui/assets/voice.txt",
-        "assets/voice.txt",
-    ] {
-        if let Ok(text) = std::fs::read_to_string(path) {
+/// Load a blank-line-separated text-box file from the assets. Used for
+/// `voice.txt` and the state-conditional pools (`integrity_low.txt`).
+fn load_lines(base: &str) -> Vec<String> {
+    for prefix in ["crates/fibonacci-gui/assets/", "assets/"] {
+        if let Ok(text) = std::fs::read_to_string(format!("{prefix}{base}")) {
             return text
                 .split("\n\n")
                 .map(str::trim)
@@ -446,6 +445,9 @@ struct App {
     side: VecDeque<f32>,
     log: VecDeque<String>,
     voice_lines: Vec<String>,
+    /// Billy's low-integrity pool: spoken instead of voice.txt whenever
+    /// LOCAL φ INTEGRITY drops below 50%.
+    low_lines: Vec<String>,
     voice_index: usize,
     voice_last_advance: f64,
     voice_last_reload: f64,
@@ -481,7 +483,8 @@ impl App {
             lissajous: VecDeque::with_capacity(512),
             side: VecDeque::with_capacity(256),
             log: VecDeque::new(),
-            voice_lines: load_voice_lines(),
+            voice_lines: load_lines("voice.txt"),
+            low_lines: load_lines("integrity_low.txt"),
             voice_index: 0,
             voice_last_advance: 0.0,
             voice_last_reload: 0.0,
@@ -902,13 +905,8 @@ impl eframe::App for App {
         // Hot-reload Billy's voice file every ~2 s.
         if now - self.voice_last_reload > 2.0 {
             self.voice_last_reload = now;
-            let lines = load_voice_lines();
-            if lines.len() != self.voice_lines.len() {
-                self.voice_lines = lines;
-                self.voice_index = 0;
-            } else {
-                self.voice_lines = lines;
-            }
+            self.voice_lines = load_lines("voice.txt");
+            self.low_lines = load_lines("integrity_low.txt");
         }
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
@@ -938,13 +936,20 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("log").min_height(150.0).show(ctx, |ui| {
             self.draw_scopes(ui);
             ui.add_space(4.0);
-            // Billy's voice, if the file exists.
-            if !self.voice_lines.is_empty() {
+            // Billy's voice, if the files exist. Below 50% φ-integrity the
+            // low-integrity pool speaks instead, when it has content.
+            let integrity = 100.0 * (1.0 - self.shadow.rip.max(self.shadow_verb.haunt));
+            let pool = if integrity < 50.0 && !self.low_lines.is_empty() {
+                &self.low_lines
+            } else {
+                &self.voice_lines
+            };
+            if !pool.is_empty() {
                 if now - self.voice_last_advance > 45.0 {
                     self.voice_last_advance = now;
-                    self.voice_index = (self.voice_index + 1) % self.voice_lines.len();
+                    self.voice_index = self.voice_index.wrapping_add(1);
                 }
-                let text = self.voice_lines[self.voice_index].clone();
+                let text = pool[self.voice_index % pool.len()].clone();
                 let resp = egui::Frame::none()
                     .stroke(Stroke::new(1.0_f32, WHITE))
                     .inner_margin(6.0)
@@ -955,7 +960,7 @@ impl eframe::App for App {
                     .response
                     .interact(Sense::click());
                 if resp.clicked() {
-                    self.voice_index = (self.voice_index + 1) % self.voice_lines.len();
+                    self.voice_index = self.voice_index.wrapping_add(1);
                     self.voice_last_advance = now;
                 }
                 ui.add_space(2.0);
