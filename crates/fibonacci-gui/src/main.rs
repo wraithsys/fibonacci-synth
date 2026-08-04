@@ -12,10 +12,14 @@
 //! line-separated paragraph); if the file is absent the instrument stays
 //! silent.
 //!
-//! Centerpiece: the Monolith — a logarithmic (golden) spiral whose vertices
-//! are displaced by the live stereo *side* signal (L−R). A clean drone
-//! leaves the shell serene; rip and haunt tear visible cracks through it.
-//! Structural phase cancellation, rendered.
+//! Centerpiece: quartered at the golden section into four hard-framed cells
+//! (Billy's 2026-08-04 annotation). Top row — the performance controls, and
+//! the Logalith: a logarithmic spiral whose vertices are displaced by the
+//! live stereo *side* signal (L−R), stamped into a coarse pixel raster so
+//! its edges staircase like the reference pixel art. A clean drone leaves
+//! the shell serene; rip and haunt tear visible cracks through it.
+//! Structural phase cancellation, rendered. Bottom row — the portrait
+//! plinth, and the voice, which types itself out.
 //!
 //! Threading: identical to the REPL shell (audio callback owns Voice +
 //! StereoVerb, SPSC rings carry Copy events in), plus one ring pointed the
@@ -28,16 +32,337 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
 use fibonacci_dsp::{
     compile, midi_to_hz, HoldSource, Melody, MelodyParams, Patch, RatioMode, Scale, StereoVerb,
-    Tuning, VerbParams, Voice, ALGORITHMS, NUM_OPS,
+    Tuning, VerbParams, Voice, ALGORITHMS, NUM_OPS, PHI,
 };
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 const START_HZ: f32 = 110.0;
 const WHITE: Color32 = Color32::WHITE;
 const BLACK: Color32 = Color32::BLACK;
 /// Publish one VizFrame every N audio samples (48 kHz / 4 = 12 k/s).
 const VIZ_DECIMATE: u32 = 4;
+
+// ── The quartered centerpiece ──────────────────────────────────────────────
+// The middle is cut at the golden section in both axes: the top row (controls
+// | Logalith) takes 1/φ of the height and the bottom row (portrait | voice)
+// the remaining 1/φ², and the left column is the *minor* section of the width
+// — floored at the width the control column actually needs, because a golden
+// proportion that clips a slider is just a broken slider.
+/// 1/φ ≈ 0.618 — the major section.
+const GOLDEN_MAJOR: f32 = 1.0 / PHI;
+/// Minimum width for the control column, in pixels.
+const CONTROL_COL_MIN: f32 = 320.0;
+/// Gutter between cells, in pixels. Panels stay packed; this is the hairline
+/// of black that keeps two 2 px frames from reading as one 4 px frame.
+const CELL_GUTTER: f32 = 5.0;
+
+// ── The Logalith: a Fibonacci shell, engraved ──────────────────────────────
+// Billy, 2026-08-04, against a watercolour of a flat many-whorled snail shell:
+// "more emphasis on it being a fibonacci shell, i think we need more
+// granularity... running it as pixels is not the right idea".
+//
+// He is right, and the reason is arithmetic: a raster cell was 11 px at his
+// panel, so a whorl 14 px across could not be drawn at all — the inner shell
+// had to be faked as a solid core. **Strokes have no such floor.** Dropping the
+// raster is what buys the granularity, and it is also cheaper: ~1,500 stroked
+// segments against 8,360 per-cell tests.
+//
+// The structure is the real anatomy of the reference: one continuous **suture**
+// (the seam the shell coils against itself along), whose successive turns *are*
+// the whorl boundaries; **septa** crossing each whorl; and finer **growth ribs**
+// between them. Nothing is filled — the shell is drawn, the way the reference
+// is drawn.
+/// Whorls, and growth per whorl. Five whorls and a doubling: 5 and 2 are both
+/// Fibonacci, doubling is the simplest self-similar growth there is, and five
+/// whorls is what leaves room for five Fibonacci chamber counts below.
+///
+/// This is no longer claiming to be a nautilus (≈3×/whorl, which only ever
+/// resolved three whorls). It is still emphatically not φ per quarter-turn —
+/// that is the golden-spiral myth, it grows ×6.85 a whorl, and this instrument
+/// does not ship myths.
+const SHELL_WHORLS: usize = 5;
+const SHELL_GROWTH: f32 = 2.0;
+const SHELL_TURNS: f32 = SHELL_WHORLS as f32;
+/// A chamber's angular width is the scale for every sideways displacement — but
+/// it cannot be, past this cap. GoldenMirror puts only 4 chambers on the outer
+/// whorl, so a chamber there spans 1.57 rad (777 px) and an uncapped ripple
+/// would swing a rib clean across the shell. Capped, displacement stays a
+/// sensible fraction of the rib's own length whatever the chamber count.
+const SHELL_SPAN_CAP: f32 = 0.35;
+/// Extra growth ribs a chamber grows at full operator level, above the one it
+/// always has. Engraving adds *lines* to darken, so level is line count.
+const SHELL_RIB_MAX: f32 = 3.0;
+/// How far across its whorl a growth rib reaches, measured from the outer
+/// suture inward: `min` at silence, plus `range` at full level. Ribs stopping
+/// short of the inner suture is both what the reference does and the depth
+/// cue — the whorl is lit at the seam it hangs from and falls away behind.
+const ENGRAVE_REACH_MIN: f32 = 0.30;
+const ENGRAVE_REACH_RANGE: f32 = 0.45;
+/// How far a rib leans back from its outer end to its inner one, **as a
+/// fraction of its own chamber's angular width**. Measuring it against the
+/// chamber rather than in absolute radians is what keeps the shape consistent
+/// across whorls: a chamber on the outer whorl spans 0.185 rad and one on the
+/// innermost spans 1.26, so a fixed angle leaned the outside hard and the inside
+/// not at all. A growth line runs perpendicular to the shell's direction of
+/// growth, which at this pitch is close to radial but not radial — straight
+/// spokes read as a bicycle wheel.
+const SHELL_RIB_SWEEP: f32 = 0.55;
+/// Undulation along a rib, same units. The rib S-bends with both ends anchored
+/// rather than merely leaning, which is what reads as grown instead of ruled.
+const SHELL_RIB_WAVE: f32 = 0.22;
+/// Multiplier on the *wave* — not the lean — for the growth ribs inside a
+/// chamber. They are free edges where the septa are structural, so they wander
+/// more (Billy: "the waviness of the lines can be quite a bit more — doubley so
+/// the ones inside the whorl").
+///
+/// The lean stays uniform on purpose. All ribs leaning the same way stay
+/// parallel and can never cross; it is only a *difference* in shape between two
+/// neighbouring ribs that tangles them. Doubling the lean too put the inner ribs
+/// 130 % of a chamber width off their septum — straight through the next
+/// chamber. Doubling the wave alone leaves 20 px of divergence against 23 px of
+/// rib spacing at full density, so they crowd their septa without crossing.
+const SHELL_RIB_INNER: f32 = 2.0;
+/// Radial undulation of the suture itself, as a fraction of the local radius,
+/// and how many undulations per whorl (13, Fibonacci). The reference shell's
+/// whorl edges are not smooth curves, and a few percent of wobble is the
+/// difference between a spiral and a grown thing. Adjacent whorls sit a whole
+/// radius apart at this growth rate, so this cannot make them collide.
+const SUTURE_WAVE: f32 = 0.035;
+/// How fast that undulation travels round the shell, rad/s.
+const SUTURE_SPEED: f64 = 0.35;
+
+// ── What the sound does to the shell ───────────────────────────────────────
+// Billy's mappings, 2026-08-04. Each is the engine's own mechanic drawn, not a
+// mood assigned to a number.
+/// `damp` is the Room's high-frequency rolloff, so it smooths the shell's own
+/// waves: undulations per whorl on the suture, and wavelengths along a rib.
+/// Damping *is* the removal of high frequencies — this is the same operation in
+/// another domain. The suture's two limits are 21 and 5, both Fibonacci.
+const SUTURE_CYCLES_OPEN: f32 = 21.0;
+const SUTURE_CYCLES_DAMPED: f32 = 5.0;
+const RIPPLE_ALONG_OPEN: f32 = 3.0;
+const RIPPLE_ALONG_DAMPED: f32 = 0.8;
+/// `fb` is an operator re-injecting its own past, so every rib is drawn
+/// alongside its own repeats: up to `ECHO_MAX` dashed copies, each stepped this
+/// far round. Feedback as literal repetition rather than as an atmosphere.
+const ECHO_MAX: f32 = 2.0;
+const ECHO_STEP: f32 = 0.17;
+/// `haunt` is the Ghost Line, whose echo rotates π/5 per pass and comes back
+/// fully inverted after five. So haunt draws up to five ghost sutures, each
+/// turned a further π/5, thinning with every pass the way the ghost's own loop
+/// gain does (0.92 per pass). The mechanic made visible, and nothing is
+/// destroyed to say it.
+const GHOST_MAX: f32 = 5.0;
+const GHOST_GAIN: f32 = 0.92;
+
+// ── The ripple ─────────────────────────────────────────────────────────────
+// Billy, 2026-08-04: "i meant how much they move... how much they are animated
+// can be increased in amplitude quite a bit".
+/// Ripple amplitude, as a fraction of the chamber's angular width. This can be
+/// large where the static wave could not: it is a *travelling* wave with a long
+/// wavelength around the shell, so neighbouring ribs stay nearly in phase and
+/// move together instead of diverging into each other. It is also purely
+/// angular — the ribs swing along their whorl, never outward — so no amount of
+/// it can push the shell past the frame.
+const RIPPLE_AMP: f32 = 0.60;
+/// Wavelengths around the *outer* whorl. The phase gradient scales with radius,
+/// so the wavelength is constant in pixels rather than in angle — which is both
+/// what a wave in a medium does and what keeps neighbours in step on the tight
+/// inner whorls. Held in angle instead, the innermost whorl (5 chambers, so ribs
+/// 0.31 rad apart) diverged 14 px against 10 px of spacing and its ribs crossed.
+/// Wavelengths *along* a rib come from `damp`.
+const RIPPLE_WRAP: f32 = 2.0;
+/// Phase speed, rad/s.
+const RIPPLE_SPEED: f64 = 0.9;
+/// What `rip` does to the ripple: **speed only**, up to 3× (Billy: "whatever rip
+/// does should be happening constantly but rip changes the speed of it"). The
+/// amplitude is a constant, so the shell is always writhing by the same amount
+/// and rip decides how frantically. Tying amplitude to rip meant a slack Rip
+/// left the creature nearly still, which is the opposite of alive.
+///
+/// This replaces the cracks entirely: violence changes how the shell moves, never
+/// whether its lines exist.
+const AGITATE_SPEED: f32 = 2.0;
+/// Pixels the whole shell stutters by at critical dread, on the same clock and
+/// in the same direction as the sliders that caused it — so the panel and its
+/// controls shake together (Billy: "once local integrity hits 0 i want the
+/// logalith jittering like the parametters do too"). 2 px rather than the
+/// sliders' 1 px: the same 1 px on a 495 px shell would not register.
+const SHELL_TREMBLE_PX: f32 = 2.0;
+/// **The seizure.** At critical dread the ripple's phase is re-thrown every
+/// frame across this range, so the wave stops travelling and the whole pattern
+/// flickers between unrelated configurations — the shell convulses rather than
+/// writhes.
+///
+/// Billy found this state by accident: while the sliders were trembling he
+/// grabbed the Rip slider, whose rect was shifting a pixel a frame under his
+/// cursor, so the value juddered — and because the phase was then computed as
+/// `elapsed × rate`, every tiny rate change threw the phase a long way. He asked
+/// for it deliberately. It is now deliberate, which also means it no longer
+/// depends on how long the app has been running (see `update`), and it belongs to
+/// the dread band rather than to an interaction accident.
+const SHELL_SEIZE: f32 = std::f32::consts::TAU;
+/// `master` sets the shell's **scale**: the creature draws itself up as the
+/// instrument gets loud and settles back when it doesn't. Silence leaves it at
+/// `SCALE_MIN` rather than nothing — it shrinks back, it does not vanish.
+///
+/// `SCALE_MAX` goes **past** the fitted radius on purpose, so a loud instrument
+/// pushes the shell off the edges of its panel and gets cropped by them. That is
+/// safe because containment was never the fit's job — the panel's clip is what
+/// guarantees nothing draws outside the frame, and Billy's rule is that being cut
+/// off is fine while overlapping is not. Note the consequence: **above 1.0 the
+/// rock's containment arithmetic no longer holds** (its headroom is budgeted
+/// against the fitted radius) and the clip alone holds the line. That is the
+/// intended trade, not an oversight.
+///
+/// At 1.45, the default `master` of 0.8 lands at scale 1.27 — the shell filling
+/// the panel with 7 % of its height cropped — and full master at 1.45 crops 19 %.
+/// Pushing the ceiling to 2.0 would crop 31 % at the *default*, which is a
+/// different picture rather than a bigger one.
+///
+/// Heavily smoothed on purpose (Billy: "master control the scale with a whole lot
+/// of smoothing"): a 1.8 s time constant, so a slider move takes ≈5 s to settle
+/// and the size reads as a slow swell rather than as a readout of the control.
+/// Smoothed exponentially against real elapsed time, so the swell is the same
+/// speed whatever the frame rate.
+const SCALE_MIN: f32 = 0.55;
+const SCALE_MAX: f32 = 1.45;
+const SCALE_SMOOTH_S: f32 = 1.8;
+/// **The umbilicus**, opened by INDEX — inversely, and for a real reason. INDEX 0
+/// is pure sine carriers: the tree's depths are silent, so the shell has no
+/// interior and its centre stands open at `UMBILICUS_MAX` of the radius. Raising
+/// INDEX "blooms the tree from the shallow modulators downward" (README §8), so
+/// the *deepest* operators engage last — and the deepest operators are the
+/// innermost whorls. The centre closes as the tree fills in.
+const UMBILICUS_MAX: f32 = 0.12;
+const INDEX_SMOOTH_S: f32 = 0.6;
+/// Stop drawing where a whorl is thinner than this many pixels: the limit is
+/// now the *stroke*, not a grid cell, which is the whole point of the change.
+const SHELL_MIN_PX: f32 = 2.5;
+/// Screen-space step along the suture, in pixels. The step is taken in angle
+/// scaled by radius, so the outer whorls get the segments and the inner ones
+/// are not oversampled into a heap of sub-pixel slivers.
+const SUTURE_STEP_PX: f32 = 3.0;
+/// Fraction of the panel the silhouette fills once fitted.
+const SHELL_FILL: f32 = 0.97;
+
+// ── The Logalith's rock ────────────────────────────────────────────────────
+// Billy, 2026-08-04: "logalith should rock side to side diagonally whatever and
+// rotate a little side to side - very subtle."
+/// Sway period, seconds. The second oscillator runs at `period / φ`, so the two
+/// are incommensurable and the motion is quasi-periodic — it never repeats, the
+/// same argument that makes the drone's own waveform never repeat. Nothing
+/// audible has an oscillator like this; the rock is presentational only.
+const ROCK_PERIOD_S: f64 = 13.0;
+/// Translation amplitude, as a fraction of **the shell's own radius** — not of
+/// the panel. Tied to the panel, a small shell swayed a large fraction of itself
+/// (twitchy) and a large one a small fraction (inert).
+///
+/// Applied against **scale squared**, not scale. Billy's reasoning is the right
+/// one — "if something is moving around by an amount from a distance, as it gets
+/// closer that movement would become perceptually much larger" — and a strict
+/// perspective projection makes that growth *linear* in apparent size. Linear was
+/// the first attempt and he could not see it: ±22 px on a 717 px shell is under
+/// 3 % of its own radius. Squaring is a deliberate exaggeration of a real effect,
+/// which is the honest description of it.
+///
+/// The tilt's amplitude stays a fixed *angle*: its effect in pixels is `r × tilt`
+/// and already scales with the shell, so scaling the angle too would double-count.
+const ROCK_SWAY: f32 = 0.060;
+/// Seconds for one full turn of the spin, at scale 1 — 377, a Fibonacci number,
+/// and slowed further by scale.
+const ROCK_SPIN_S: f64 = 377.0;
+// Scale also stretches the rock's periods, so a bigger shell moves more slowly —
+// 7.2 s at its smallest, 18.9 s at its largest (Billy: "the scale has to
+// influence the speed and amount of that slow movement... to make it feel like
+// it's floating in space"). Mass, essentially: a large thing adrift does not
+// hurry. Applied where the phases are integrated, in `update`.
+/// Rotation amplitude in radians (≈4.3°). Rotation is the load-bearing half of
+/// the rock: in a coarse raster a uniform translation snaps the whole shell a
+/// whole cell at a time, whereas a rotation moves the outer whorls further than
+/// the inner ones, so cells flip a few at a time and the motion reads as a live
+/// shimmer instead of a jump. At ≈1.5° that shimmer was one cell of edge travel
+/// and read as flicker rather than movement (Billy: "a little too subtle — it
+/// should be enough so you can believe it's alive"); this is ≈3 cells.
+const ROCK_TILT: f32 = 0.075;
+/// The tilt is two golden-related sines summed, not one: a single sine rocks
+/// like a metronome, and a creature does not. The second runs at `period / φ²`
+/// at a third of the weight, and the sum is renormalised so the amplitude
+/// still cannot exceed `ROCK_TILT` — which is what keeps the containment
+/// arithmetic below a proof rather than an estimate.
+const ROCK_TILT_2: f32 = 0.34;
+
+// ── The portrait plinth (Space Z) ──────────────────────────────────────────
+/// Scanline pitch behind the portrait, in pixels: a 1 px rule every 3 px.
+const SCANLINE_PITCH: f32 = 3.0;
+
+// ── The Logalith's sky ─────────────────────────────────────────────────────
+// Billy's mythology (2026-08-04): the shell is a space entity that emits
+// resonant sound at targets, punishing humans for experiments that locally
+// subvert the physical law its own form is bound to. So its panel is space.
+// (This is also, at last, what LOCAL φ INTEGRITY has been measuring all
+// along.) The stars are the whole scene — the planet and the beam were built,
+// seen, and cut; see DESIGN.md.
+/// Stars in the Logalith's panel. Positions come from a hash of the star's
+/// index — deterministic, so it is the same sky every launch, with no RNG and
+/// no allocation. Sizes are 1 px, some 2 px, and the occasional 4-point
+/// sparkle: the register of the 1-bit space panels Billy referenced.
+const STAR_COUNT: usize = 170;
+
+// ── The background's motion field ──────────────────────────────────────────
+// Billy, 2026-08-04: the background moves with a separate motion field — "not
+// literal movement — field behaviour": drift, parallax wobble, extremely slow
+// curvature, noise warping, lensing around the Logalith, edge shimmer.
+//
+// Every term is a pure function of (star index, time): no state, no RNG, no
+// allocation, and the same sky every launch. Periods are Fibonacci seconds and
+// pairwise coprime — 21·34·55·89 = 3,495,030 s ≈ 40 days before the field
+// returns to its starting configuration, so it never repeats inside a session.
+// This field is entirely independent of the shell's own rock, which is the
+// point: two motions that do not share a clock read as a creature in a medium,
+// where one shared clock reads as a single moving picture.
+/// Drift of the nearest parallax layer, in panel-widths per second.
+const SKY_DRIFT: f32 = 0.0045;
+/// Drift bearing. The golden angle, so the field slides along no axis.
+const SKY_DRIFT_ANGLE: f32 = 2.399_963_2;
+/// Parallax wobble amplitude for the nearest layer, as a fraction of the panel.
+const SKY_WOBBLE: f32 = 0.010;
+/// Peak curvature coefficient, and its period. Positive bulges the field away
+/// from centre, negative draws it in; at ±0.09 over ‖u‖² ≤ 0.5 the field
+/// breathes by ≈4 % of its own width, which is invisible per frame and obvious
+/// over a minute — "extremely slow curvature distortion".
+const SKY_CURVE: f32 = 0.09;
+const SKY_CURVE_PERIOD_S: f64 = 89.0;
+/// Noise warp amplitude, as a fraction of the panel.
+const SKY_WARP: f32 = 0.014;
+/// Lensing: stars are pushed off the shell by `SKY_LENS · R² / d`, capped at
+/// `SKY_LENS_MAX · R`. Deflection ∝ 1/d is the real lensing law, and the cap is
+/// what stops the singularity at d → 0 from flinging stars across the panel.
+const SKY_LENS: f32 = 0.055;
+const SKY_LENS_MAX: f32 = 0.40;
+/// Shimmer ramps in over this fraction of the panel at each edge, and takes a
+/// star off for at most this duty. The field is calm in the middle and restless
+/// at its boundary; it also hides the seam where a drifting star wraps.
+const SKY_EDGE: f32 = 0.24;
+const SKY_SHIMMER_DUTY: f32 = 0.34;
+
+// ── The voice, generating ──────────────────────────────────────────────────
+/// Teletype rate, characters per second, before humanising. At 30 cps a box
+/// of Billy's takes 9–11 s — brisk, but close enough to reading pace that you
+/// can follow it as it lands. (Was 38, which outran reading by 2×.)
+const TYPE_CPS: f32 = 30.0;
+/// Per-character dwell jitter, ±fraction. A metronome reads as a machine;
+/// this is what makes it read as someone typing. Derived from a hash of the
+/// character's index, never from a clock or an RNG — so a given box types
+/// with the same rhythm every time it comes round.
+const TYPE_JITTER: f32 = 0.4;
+
+// ── The header marquee ─────────────────────────────────────────────────────
+/// Marquee scroll rate, pixels per second, advanced in whole pixels only.
+const MARQUEE_PX_PER_SEC: f64 = 40.0;
+/// How many of the most recent log lines ride the ticker.
+const MARQUEE_LINES: usize = 6;
 
 #[derive(Clone, Copy)]
 enum Event {
@@ -473,6 +798,323 @@ enum Dread {
     Critical,
 }
 
+/// Time constant for the critical band's ramp, in seconds. The band itself
+/// switches discretely (with hysteresis), but everything it *drives* — the
+/// trembling controls, the shell's stutter, the shell's seizure — fades in and
+/// out through this, so crossing the threshold is an onset rather than a switch
+/// being flipped (Billy: "add smoothing to the ramp up and down to the integrity
+/// triggers").
+const DREAD_SMOOTH_S: f32 = 0.9;
+
+/// A piece of 1-bit art loaded from the assets: thresholded to two colours and
+/// uploaded with nearest-neighbour filtering, so a whole-number scale keeps
+/// every pixel square. Used for the portrait plinth and for the planet.
+///
+/// The portrait slot follows the voice pools exactly — `portrait_critical.png`,
+/// `portrait_low.png`, `portrait.png`, each falling back to the next — so the
+/// face can change as integrity drains. All of it is Billy's pen, like
+/// `voice.txt`; while a slot is empty its panel claims nothing.
+/// Where the shell sits and how far it is turned this frame. Shared between the
+/// shell and the background, so the lensing bends around the shell that is
+/// actually drawn.
+struct ShellPose {
+    /// The silhouette's centre — what the shell turns about, and what the
+    /// background lenses around.
+    pivot: Pos2,
+    /// The spiral's pole after sway, *before* the turn. The renderer maps
+    /// screen cells back through the turn rather than forward, so it wants the
+    /// unturned pole.
+    pole: Pos2,
+    tilt: f32,
+    max_r: f32,
+}
+
+struct BitArt {
+    path: String,
+    stamp: Option<SystemTime>,
+    /// The decoded source, kept so the on-screen texture can be rebuilt at
+    /// whatever size the panel gives it (see `rebuild_tex`).
+    lum: Vec<u8>,
+    alpha: Vec<u8>,
+    src: [usize; 2],
+    tex: egui::TextureHandle,
+    /// The pixel size `tex` was built for.
+    tex_size: [usize; 2],
+}
+
+impl BitArt {
+    fn size(&self) -> Vec2 {
+        Vec2::new(self.src[0] as f32, self.src[1] as f32)
+    }
+
+    /// Build the on-screen texture at exactly `want` pixels.
+    ///
+    /// Reduction is **area-averaged, then ordered-dithered** — never sampled.
+    /// Billy's Earth is 1000×1000 of ~10 px blocks; whole-number
+    /// nearest-neighbour into a 139 px box would sample every 7th pixel, which
+    /// takes some blocks twice and drops others entirely and turns the
+    /// continents into irregular mush. Averaging each target pixel's source
+    /// block recovers a true local grey, and the 4×4 Bayer threshold turns that
+    /// grey back into strict 1-bit — the same dither primitive the rest of the
+    /// UI shades with. At 1:1 the block is one pixel and the result is exactly
+    /// the source, losslessly.
+    fn rebuild_tex(&mut self, ctx: &egui::Context, name: &str, want: [usize; 2]) {
+        let (tw, th) = (want[0].max(1), want[1].max(1));
+        let (sw, sh) = (self.src[0], self.src[1]);
+        let mut pixels = Vec::with_capacity(tw * th);
+        for ty in 0..th {
+            let y0 = ty * sh / th;
+            let y1 = (((ty + 1) * sh + th - 1) / th).max(y0 + 1).min(sh);
+            for tx in 0..tw {
+                let x0 = tx * sw / tw;
+                let x1 = (((tx + 1) * sw + tw - 1) / tw).max(x0 + 1).min(sw);
+                let mut lum = 0u32;
+                let mut alpha = 0u32;
+                let mut count = 0u32;
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        lum += self.lum[y * sw + x] as u32;
+                        alpha += self.alpha[y * sw + x] as u32;
+                        count += 1;
+                    }
+                }
+                let count = count.max(1);
+                let (lum, alpha) = (lum / count, alpha / count);
+                pixels.push(if alpha < 128 {
+                    Color32::TRANSPARENT
+                } else if lum as f32 / 255.0 > BAYER[ty & 3][tx & 3] {
+                    WHITE
+                } else {
+                    BLACK
+                });
+            }
+        }
+        self.tex = ctx.load_texture(
+            name,
+            egui::ColorImage { size: [tw, th], pixels },
+            egui::TextureOptions::NEAREST,
+        );
+        self.tex_size = [tw, th];
+    }
+}
+
+/// Candidate portrait files for a dread band, most specific first.
+fn portrait_candidates(dread: Dread) -> &'static [&'static str] {
+    match dread {
+        Dread::Critical => &["portrait_critical.png", "portrait_low.png", "portrait.png"],
+        Dread::Low => &["portrait_low.png", "portrait.png"],
+        Dread::Normal => &["portrait.png"],
+    }
+}
+
+/// Resolve an asset name to a readable path, workspace layout or shipped
+/// layout — same search order as the text assets.
+fn asset_path(base: &str) -> Option<std::path::PathBuf> {
+    ["crates/fibonacci-gui/assets/", "assets/"]
+        .iter()
+        .map(|prefix| std::path::PathBuf::from(format!("{prefix}{base}")))
+        .find(|p| p.is_file())
+}
+
+fn file_stamp(path: &std::path::Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
+}
+
+/// Decode a PNG to strict 1-bit. Alpha below half is left transparent so
+/// whatever is behind the art shows through its own background — the plinth's
+/// scanlines, or the starfield; everything opaque snaps to white or black at
+/// half luminance. Two colours, no in-between: a greyscale portrait would
+/// break the first hard rule in DESIGN.md.
+fn load_bit_art(ctx: &egui::Context, name: &str, path: &std::path::Path) -> Option<BitArt> {
+    let bytes = std::fs::read(path).ok()?;
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
+    let rgba = decoded.to_rgba8();
+    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut lum = Vec::with_capacity(w * h);
+    let mut alpha = Vec::with_capacity(w * h);
+    for p in rgba.pixels() {
+        let l = 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
+        lum.push(l.round().clamp(0.0, 255.0) as u8);
+        alpha.push(p[3]);
+    }
+    let mut art = BitArt {
+        path: path.to_string_lossy().into_owned(),
+        stamp: file_stamp(path),
+        lum,
+        alpha,
+        src: [w, h],
+        tex: ctx.load_texture(
+            name,
+            egui::ColorImage::new([1, 1], Color32::TRANSPARENT),
+            egui::TextureOptions::NEAREST,
+        ),
+        tex_size: [0, 0],
+    };
+    art.rebuild_tex(ctx, name, [w, h]);
+    Some(art)
+}
+
+/// The on-screen size for a piece of art inside `cap`, aspect preserved: a
+/// whole-number upscale when the art fits, or an exact fit when it does not —
+/// in which case the texture is rebuilt once at that size by area-averaging,
+/// rather than pixels being thrown away every frame.
+fn art_box(size: Vec2, cap: Vec2) -> Vec2 {
+    let fit = (cap.x / size.x).min(cap.y / size.y);
+    if fit >= 1.0 {
+        size * fit.floor()
+    } else {
+        // Reduce by a whole-number ratio. Art like Billy's Earth is itself
+        // built of blocks — 1000 px of ~10 px pixels — and a fractional ratio
+        // splits those blocks across target pixels, which area-averaging turns
+        // to grey and the dither then breaks up. `1000 / 5 = 200` keeps every
+        // block exactly 2×2. Rounding the divisor *up* is what guarantees the
+        // result still fits the cap.
+        size / (1.0 / fit).ceil()
+    }
+}
+
+/// Keep an art slot's texture built for the size it is actually drawn at, so a
+/// reduction happens once per resize instead of once per frame. Upscales stay
+/// at source resolution and are magnified by NEAREST.
+fn fit_slot(ctx: &egui::Context, slot: &mut Option<BitArt>, name: &str, target: Vec2) {
+    let Some(art) = slot else {
+        return;
+    };
+    let want = [
+        target.x.round().max(1.0) as usize,
+        target.y.round().max(1.0) as usize,
+    ];
+    let want = if want[0] >= art.src[0] { art.src } else { want };
+    if art.tex_size != want {
+        art.rebuild_tex(ctx, name, want);
+    }
+}
+
+/// Point an art slot at the first readable candidate, reloading when the file
+/// on disk changes — the same hot-reload contract the text assets get, so
+/// Billy can draw with the instrument running.
+fn refresh_slot(
+    ctx: &egui::Context,
+    slot: &mut Option<BitArt>,
+    candidates: &[&str],
+    name: &str,
+) {
+    let wanted = candidates.iter().find_map(|n| asset_path(n));
+    match (&slot, &wanted) {
+        (_, None) => *slot = None,
+        (Some(cur), Some(path)) => {
+            if cur.path != path.to_string_lossy() || cur.stamp != file_stamp(path) {
+                *slot = load_bit_art(ctx, name, path);
+            }
+        }
+        (None, Some(path)) => *slot = load_bit_art(ctx, name, path),
+    }
+}
+
+/// The shell's polar radius at `theta`, in units of its outermost radius, with
+/// the suture's travelling undulation at phase `ph` — so the ribs' endpoints ride
+/// the same rippling seam the suture is drawn along.
+fn shell_unit_r(theta: f32, ph: f32, cycles: f32) -> f32 {
+    let theta_max = SHELL_TURNS * std::f32::consts::TAU;
+    SHELL_GROWTH.powf((theta - theta_max) / std::f32::consts::TAU)
+        * (1.0 + SUTURE_WAVE * (theta * cycles + ph).sin())
+}
+
+/// The shell's target scale for a given master level.
+fn scale_for(master: f32) -> f32 {
+    SCALE_MIN + (SCALE_MAX - SCALE_MIN) * master.clamp(0.0, 1.0)
+}
+
+/// A rib's angular offset from its own station, at fractional position `u` along
+/// it (0 at the inner end, 1 at the outer). Three terms: the lean back toward the
+/// centre, the static S-bend, and the travelling ripple — the last two windowed so
+/// both ends stay pinned to their sutures.
+///
+/// `span` is the chamber's angular width, capped; `waviness` doubles the S-bend
+/// for the free ribs inside a chamber; `along` is wavelengths along the rib (from
+/// `damp`); `phase` is where this rib stands in the travelling wave.
+fn rib_offset(u: f32, span: f32, waviness: f32, along: f32, phase: f32) -> f32 {
+    let pi = std::f32::consts::PI;
+    let s = span.min(SHELL_SPAN_CAP);
+    let lean = SHELL_RIB_SWEEP * s * (1.0 - u);
+    let wave = SHELL_RIB_WAVE * s * waviness * (u * std::f32::consts::TAU).sin();
+    let ripple = RIPPLE_AMP * s * (u * pi * along + phase).sin() * (u * pi).sin();
+    -lean + wave + ripple
+}
+
+/// Chambers per whorl, outermost first — and this is where the shell says which
+/// tuning it is in. Each mode's counts come from the integer sequence whose
+/// ratio limit *is* that mode's own constant:
+///
+/// - **harmonic**: the harmonic series itself, 6 × (5, 4, 3, 2, 1).
+/// - **fibonacci**: F(9)…F(5).
+/// - **golden**: the Lucas numbers. `L(n)/L(n−1) → φ` just as the Fibonacci
+///   ratios do — the other golden sequence, so golden mode is visibly a
+///   *different* creature from fibonacci mode while meaning the same limit.
+/// - **mirror**: those same Lucas numbers reversed, so the dense divisions sit at
+///   the centre — a mode that mirrors its exponents around the fundamental,
+///   mirrored.
+/// - **plastic**: Padovan numbers, `P(n) = P(n−2) + P(n−3)`, whose ratio limit is
+///   ρ. That is the very sequence the mode's own operator ratios come from.
+///
+/// No two whorls in a mode share a count, so no two share an angular division and
+/// the per-operator assignment cannot line up into radial stripes. (Chambers are
+/// numbered by one running counter across the whole shell, so a stripe would need
+/// two whorls sharing both a count and a starting operator — individual counts
+/// being divisible by 5 is harmless, and two of them are.)
+fn chambers_for(mode: RatioMode) -> [u32; SHELL_WHORLS] {
+    match mode {
+        RatioMode::Harmonic => [30, 24, 18, 12, 6],
+        RatioMode::Fibonacci => [34, 21, 13, 8, 5],
+        RatioMode::Golden => [29, 18, 11, 7, 4],
+        RatioMode::GoldenMirror => [4, 7, 11, 18, 29],
+        RatioMode::Plastic => [28, 21, 16, 12, 9],
+    }
+}
+
+/// Where the shell sits in a panel: the origin its polar equation is drawn
+/// about, and the pixel length of one unit radius.
+///
+/// A logarithmic spiral is not centred on its own origin, and its origin is
+/// not its middle: the silhouette is fat at the terminal angle and thin a
+/// whorl back, so its outline's centre sits ≈(+0.181, +0.229) radii from the
+/// pole. Drawn about the panel centre it lands in a corner with dead space
+/// opposite (Billy, 2026-08-04: "other than position"). Measure the unit
+/// outline once — arm thickness included — then scale it to fill the panel and
+/// translate so the *outline* is centred. Shared by the shell and by anything
+/// that has to aim at it.
+fn shell_fit(rect: Rect) -> (Pos2, f32) {
+    let (lo, hi) = shell_unit_bounds();
+    let span = hi - lo;
+    let max_r = ((rect.width() / span.x).min(rect.height() / span.y) * SHELL_FILL).max(1.0);
+    (rect.center() - (lo + hi) * 0.5 * max_r, max_r)
+}
+
+/// The shell's unit silhouette as `(lo, hi)` in units of the outermost radius.
+/// The rim *is* the suture, so the curve's own bounds are the silhouette's.
+///
+/// Measured on the **smooth** spiral and then inflated by the undulation's worst
+/// case: the suture ripples with time, and a fit recomputed against a moving
+/// boundary would make the whole shell breathe in *scale*, which is a different
+/// and much worse effect than the one intended.
+fn shell_unit_bounds() -> (Vec2, Vec2) {
+    let theta_max = SHELL_TURNS * std::f32::consts::TAU;
+    let tau = std::f32::consts::TAU;
+    let (mut lo, mut hi) = (Vec2::new(f32::MAX, f32::MAX), Vec2::new(f32::MIN, f32::MIN));
+    let probe = 720;
+    for k in 0..=probe {
+        let theta = theta_max * k as f32 / probe as f32;
+        let r = SHELL_GROWTH.powf((theta - theta_max) / tau) * (1.0 + SUTURE_WAVE);
+        let p = Vec2::new(theta.cos(), theta.sin()) * r;
+        lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
+        hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
+    }
+    (lo, hi)
+}
+
 struct App {
     rig: AudioRig,
     shadow: Patch,
@@ -483,7 +1125,6 @@ struct App {
     env: [f32; NUM_OPS],
     scope: VecDeque<f32>,
     lissajous: VecDeque<(f32, f32)>,
-    side: VecDeque<f32>,
     log: VecDeque<String>,
     voice_lines: Vec<String>,
     /// Billy's low-integrity pool: spoken instead of voice.txt whenever
@@ -496,6 +1137,41 @@ struct App {
     voice_index: usize,
     voice_last_advance: f64,
     voice_last_reload: f64,
+    /// The box currently being typed. Compared against the selected box each
+    /// frame: any difference (advance, pool switch, or Billy editing the file
+    /// under us) restarts the reveal.
+    voice_typing: String,
+    /// Characters of `voice_typing` revealed so far, and the unspent typing
+    /// time carried between frames.
+    voice_revealed: usize,
+    voice_credit: f32,
+    /// Wall clock of the previous frame, for the reveal's own timebase.
+    last_frame_time: f64,
+    /// Integrated phases for the shell's ripple and its suture's undulation.
+    /// See `update` for why these are accumulated rather than computed from
+    /// elapsed time.
+    ripple_phase: f32,
+    suture_phase: f32,
+    /// The rock's three oscillators, integrated separately. They cannot share one
+    /// phase scaled by φ powers: wrapping a shared phase at τ would leave the
+    /// φ-multiplied ones discontinuous, since φ is irrational and no common period
+    /// exists. Kept apart, each wraps cleanly.
+    rock_phase: [f32; 3],
+    /// The shell's continuous slow turn.
+    spin: f32,
+    /// The shell's smoothed scale, chasing `master`.
+    shell_scale: f32,
+    /// How far into the critical band we are, 0..1, smoothed. Everything the band
+    /// drives is scaled by this, so it ramps instead of snapping.
+    dread_level: f32,
+    /// Smoothed INDEX, driving the umbilicus. A slider move should open or close
+    /// the centre, not teleport it.
+    index_smooth: f32,
+    /// Space Z's art, if a slot is filled, and the band it was resolved for —
+    /// so a band change re-resolves the slot immediately instead of waiting
+    /// for the next asset poll.
+    portrait: Option<BitArt>,
+    portrait_dread: Dread,
     frame_count: u64,
     drone_hz: f32,
     preset_name: String,
@@ -526,7 +1202,6 @@ impl App {
             env: [0.0; NUM_OPS],
             scope: VecDeque::with_capacity(1024),
             lissajous: VecDeque::with_capacity(512),
-            side: VecDeque::with_capacity(256),
             log: VecDeque::new(),
             voice_lines: load_lines("voice.txt"),
             low_lines: load_lines("integrity_low.txt"),
@@ -536,6 +1211,21 @@ impl App {
             voice_index: 0,
             voice_last_advance: 0.0,
             voice_last_reload: 0.0,
+            voice_typing: String::new(),
+            voice_revealed: 0,
+            voice_credit: 0.0,
+            last_frame_time: 0.0,
+            ripple_phase: 0.0,
+            suture_phase: 0.0,
+            rock_phase: [0.0; 3],
+            spin: 0.0,
+            // Start settled, so a restored session opens at its own size rather
+            // than swelling in from small.
+            shell_scale: scale_for(shadow.master_level),
+            dread_level: 0.0,
+            index_smooth: shadow.index,
+            portrait: None,
+            portrait_dread: Dread::Normal,
             frame_count: 0,
             drone_hz: state.drone_hz,
             preset_name: String::new(),
@@ -559,6 +1249,9 @@ impl App {
         ));
         if !app.rig.midi_connected {
             app.push_log("no midi input found. pitch control by ui only.".into());
+        }
+        if asset_path("portrait.png").is_none() {
+            app.push_log("portrait slot empty: assets/portrait.png absent.".into());
         }
         Ok(app)
     }
@@ -602,14 +1295,13 @@ impl App {
         }
     }
 
-    /// Horizontal tremble for the controls that caused the damage. Zero
-    /// except at critical dread; ±1 px, purely visual, never functional.
+    /// Horizontal tremble for the controls that caused the damage — and for the
+    /// shell. ±1 px scaled by how far into the critical band we are, so it fades
+    /// in and out rather than snapping on. Purely visual, never functional.
+    /// Callers that lay out widgets round it, so the controls stay pixel-crisp
+    /// while the ramp resolves in whole steps.
     fn tremble(&self) -> f32 {
-        if self.dread == Dread::Critical {
-            ((self.frame_count / 2 % 3) as f32) - 1.0
-        } else {
-            0.0
-        }
+        (((self.frame_count / 2 % 3) as f32) - 1.0) * self.dread_level
     }
 
     fn push_log(&mut self, line: String) {
@@ -719,7 +1411,6 @@ impl App {
                 };
             }
             let mono = 0.5 * (frame.l + frame.r);
-            let side = 0.5 * (frame.l - frame.r);
             if self.scope.len() >= 1024 {
                 self.scope.pop_front();
             }
@@ -728,81 +1419,470 @@ impl App {
                 self.lissajous.pop_front();
             }
             self.lissajous.push_back((frame.l, frame.r));
-            if self.side.len() >= 256 {
-                self.side.pop_front();
-            }
-            self.side.push_back(side);
         }
     }
 
-    /// The Logalith: a logarithmic spiral, vertices displaced by the live
-    /// side signal, segments broken as rip/haunt rise. Serene when the
-    /// phase is coherent; cracked when it is not.
+    /// Where the shell is this frame — evaluated once and shared, because the
+    /// background's lensing has to bend around exactly the shell that gets
+    /// drawn, not a stale copy of it.
     ///
-    /// Growth rate is the chambered nautilus's ≈3× per whorl — NOT φ per
-    /// quarter-turn (×6.85 per whorl), which is the famous myth and also
-    /// collapses every inner whorl into a dot on screen. The φ in this
-    /// creature lives in its septa placement (golden-angle stations) and
-    /// everywhere else in the instrument.
-    fn draw_monolith(&self, painter: &egui::Painter, rect: Rect) {
-        let center = rect.center();
-        let max_r = rect.width().min(rect.height()) * 0.47;
-        const GROWTH_PER_WHORL: f32 = 3.0;
+    /// The rock: golden-related oscillators, one pair for the diagonal sway and
+    /// a summed pair — offset by π/5, the instrument's own rotation constant —
+    /// for the tilt, so the turn leads the drift rather than tracking it, and
+    /// neither is a metronome.
+    ///
+    /// The fit happens inside a panel shrunk by everything the rock can add, so
+    /// sway and tilt provably never reach the frame. The shell turns about its
+    /// own silhouette centre, not the spiral's pole: the pole is ≈0.29 radii
+    /// off-centre, so turning about it would swing the whole shape through an
+    /// arc and cost far more room than turning it in place. Rotating a box in
+    /// place grows it by the *other* axis's extent times sin(tilt), and since
+    /// the fit is height-limited the horizontal share of that is free — budget
+    /// the axes separately and the amplitude comes much cheaper. Signal jitter
+    /// is deliberately NOT budgeted for: it is caged by `SHELL_JITTER_MAX` and
+    /// clipped by the panel, because a Room violent enough to push the shell
+    /// into its own frame should look like it.
+    fn shell_pose(&self, rect: Rect) -> ShellPose {
+        // Phases are integrated in `update` — and divided there by the scale, so a
+        // bigger shell drifts more slowly.
+        let [p0, p1, p2] = self.rock_phase;
+        let w1 = p0.sin();
+        let w2 = p1.sin();
+        // The oscillating tilt, plus the continuous spin.
+        let tilt = ((p1 + std::f32::consts::PI / 5.0).sin() + ROCK_TILT_2 * p2.sin())
+            / (1.0 + ROCK_TILT_2)
+            * ROCK_TILT
+            + self.spin;
+
+        let (_, probe_r) = shell_fit(rect);
+        let (lo, hi) = shell_unit_bounds();
+        // Sway grows with the *square* of the scale, so a close shell ranges
+        // across the panel instead of nudging.
+        let s = self.shell_scale;
+        let sway = Vec2::new(w1, w2) * (probe_r * s * s * ROCK_SWAY);
+        let half = (hi - lo) * 0.5 * probe_r;
+        let swing = ROCK_TILT.sin();
+        // The sway is deliberately **not** budgeted here. Budgeting it would shrink
+        // the shell to guarantee the drift stays inside the frame, which is the
+        // opposite of the point: it is supposed to range across the space and be
+        // cropped when it reaches the edge. Only the tilt and the stutter are
+        // reserved for; the clip holds everything else.
+        let headroom = Vec2::new(
+            half.y * swing + SHELL_TREMBLE_PX,
+            half.x * swing,
+        );
+        // At critical dread the whole shell stutters, on the same clock and in the
+        // same direction as the sliders that caused it, so the panel and its
+        // controls shake together. Budgeted into the headroom above rather than
+        // left to the clip, so the containment stays a proof.
+        // Ramped by `dread_level` inside `tremble`, so the stutter fades in.
+        let stutter = Vec2::new(self.tremble() * SHELL_TREMBLE_PX, 0.0);
+        let (_, fitted_r) = shell_fit(rect.shrink2(headroom));
+        // `master`, smoothed, scales the shell. The pole has to be re-derived
+        // from the scaled radius rather than simply moved: its offset from the
+        // silhouette's centre is itself proportional to the radius, so scaling
+        // `max_r` alone would shrink the shell toward its own pole and slide it
+        // off-centre.
+        let max_r = fitted_r * self.shell_scale;
+        let pole = rect.center() - (lo + hi) * 0.5 * max_r;
+        ShellPose {
+            pivot: rect.center() + sway + stutter,
+            pole: pole + sway + stutter,
+            tilt,
+            max_r,
+        }
+    }
+
+    /// The Logalith: a Fibonacci shell, drawn rather than filled.
+    ///
+    /// One continuous **suture** whose successive turns are the whorl
+    /// boundaries; **septa** crossing each whorl, `chambers_for(mode)` of them —
+    /// an integer sequence whose ratio limit is the tuning's own constant, which
+    /// is where the shell says what it is; and finer **growth ribs** between the
+    /// septa, their count and their reach across the whorl carrying one
+    /// operator's live level.
+    ///
+    /// The whole of it ripples on a travelling wave, and the sound reaches it
+    /// through six channels: operator levels engrave the chambers, `rip`
+    /// agitates the ripple, `damp` smooths its wavelengths, `fb` draws every rib
+    /// alongside its own echoes, `haunt` raises ghost sutures at π/5, and the
+    /// ratio mode divides the whorls. Nothing is destroyed to say any of it.
+    ///
+    /// Strokes, not cells. A raster cell was 11 px at Billy's panel, so a whorl
+    /// 14 px across could not be drawn at all; a 1 px stroke has no such floor,
+    /// which is what lets the inner whorls exist (Billy: "more granularity...
+    /// running it as pixels is not the right idea"). Points are snapped to whole
+    /// pixels, because feathering is off and a fractional vertex is a blurry
+    /// vertex.
+    fn draw_monolith(&self, painter: &egui::Painter, rect: Rect, pose: &ShellPose) {
+        if rect.width().min(rect.height()) < 16.0 {
+            return;
+        }
         let tau = std::f32::consts::TAU;
-        let turns = 3.25_f32;
-        let theta_max = turns * tau;
-        let r_at = |theta: f32| max_r * GROWTH_PER_WHORL.powf((theta - theta_max) / tau);
-        let violence = (self.shadow.rip + self.shadow_verb.haunt).min(1.5);
-        let n = 420;
-        let mut prev: Option<Pos2> = None;
-        for k in 0..=n {
-            let theta = theta_max * k as f32 / n as f32;
-            let raw = if self.side.is_empty() {
-                0.0
-            } else {
-                self.side[(k * 7 + self.frame_count as usize) % self.side.len()]
+        let theta_max = SHELL_TURNS * tau;
+        let ShellPose { pole, tilt, max_r, .. } = *pose;
+        // rip drives the ripple's *speed*, integrated into these phases in
+        // `update`. The amplitude is constant: the shell always writhes, rip
+        // decides how frantically. haunt gets its own conveyance below (the
+        // ghosts), so it is not doubled up here.
+        //
+        // At critical dread the phase is re-thrown every frame, so the wave stops
+        // travelling and the shell convulses. One offset for the whole shell, not
+        // one per rib: the ribs keep their phase relationships, so the pattern
+        // stays a pattern and flickers between configurations rather than
+        // dissolving into noise.
+        // Ramped by the same smoothed band level as the stutter, so the convulsion
+        // comes on rather than being switched on.
+        let seize = if self.dread_level > 0.001 {
+            let h = self.frame_count.wrapping_mul(2654435761) % 10007;
+            (h as f32 / 10007.0 - 0.5) * SHELL_SEIZE * self.dread_level
+        } else {
+            0.0
+        };
+        let suture_ph = self.suture_phase + seize;
+        let ripple_clock = self.ripple_phase + seize;
+
+        // damp smooths the shell's own waves: fewer undulations per whorl, and
+        // longer wavelengths along each rib.
+        let damp = self.shadow_verb.damp.clamp(0.0, 1.0);
+        let cycles = SUTURE_CYCLES_OPEN + (SUTURE_CYCLES_DAMPED - SUTURE_CYCLES_OPEN) * damp;
+        let along = RIPPLE_ALONG_OPEN + (RIPPLE_ALONG_DAMPED - RIPPLE_ALONG_OPEN) * damp;
+        // fb is an operator re-injecting its past: every rib is drawn with its
+        // own repeats alongside it.
+        let echoes = (self.shadow.feedback.clamp(0.0, 1.0) * ECHO_MAX).round() as u32;
+
+        let r_at = |t: f32| max_r * shell_unit_r(t, suture_ph, cycles);
+        // The umbilicus: the open centre, dilated as INDEX falls.
+        let eye = (SHELL_MIN_PX + max_r * UMBILICUS_MAX * (1.0 - self.index_smooth))
+            .min(max_r * 0.9);
+        // Whole-pixel vertices: feathering is off, so a fractional point is a
+        // blurry point.
+        let at = |t: f32, r: f32| {
+            let a = t + tilt;
+            Pos2::new(
+                (pole.x + a.cos() * r).round(),
+                (pole.y + a.sin() * r).round(),
+            )
+        };
+        // A rib is a wavy curve, not a spoke: it leans back toward the centre and
+        // S-bends on the way, both ends anchored. `span` is the chamber's own
+        // angular width, so the shape is the same on every whorl. `waviness`
+        // scales the S-bend only — see `SHELL_RIB_INNER` for why the lean is
+        // deliberately left uniform.
+        let rib = |t: f32, r_inner: f32, r_outer: f32, w: f32, span: f32, waviness: f32| {
+            // The travelling wave's phase where this rib stands, its gradient
+            // scaled by radius so the wavelength is constant in pixels. That
+            // keeps neighbours nearly in step, which is what lets the amplitude
+            // be large without ribs meeting each other.
+            let ph = ripple_clock + t * RIPPLE_WRAP * (r_outer / max_r);
+            let n = 14;
+            let shape = |off: f32| -> Vec<Pos2> {
+                (0..=n)
+                    .map(|k| {
+                        let u = k as f32 / n as f32;
+                        at(
+                            t + rib_offset(u, span, waviness, along, ph) + off,
+                            r_inner + (r_outer - r_inner) * u,
+                        )
+                    })
+                    .collect()
             };
-            // Soft-limit the displacement and cage the shell in its frame:
-            // a hot Room may shake the Logalith, never evict it.
-            let side = raw / (1.0 + raw.abs());
-            let jitter = side * max_r * 0.30 * (0.15 + violence);
-            let rr = (r_at(theta) + jitter).clamp(0.0, max_r * 1.04);
-            let p = center + Vec2::new(theta.cos(), theta.sin()) * rr;
-            if let Some(q) = prev {
-                // Cracks: segments drop out as phase violence rises.
-                let h = (k as u64)
-                    .wrapping_mul(2654435761)
-                    .wrapping_add(self.frame_count / 6) % 100;
-                if (h as f32) >= violence * 38.0 {
-                    painter.line_segment([q, p], Stroke::new(1.0_f32, WHITE));
+            painter.add(egui::Shape::line(shape(0.0), Stroke::new(w, WHITE)));
+            // fb's echoes: the same rib again, stepped round and dashed, so it
+            // reads as a repeat rather than as a second rib.
+            for e in 1..=echoes {
+                let pts = shape(ECHO_STEP * span.min(SHELL_SPAN_CAP) * e as f32);
+                for k in (0..pts.len() - 1).step_by(2) {
+                    painter.line_segment([pts[k], pts[k + 1]], Stroke::new(1.0_f32, WHITE));
                 }
             }
-            prev = Some(p);
+        };
+
+        // The suture, as broken polyline runs. The outermost turn is drawn
+        // heavier: that edge is the silhouette, and it has to read as one.
+        let mut run: Vec<Pos2> = Vec::new();
+        let mut run_heavy = false;
+        let flush = |run: &mut Vec<Pos2>, heavy: bool| {
+            if run.len() > 1 {
+                let w = if heavy { 2.0_f32 } else { 1.0 };
+                painter.add(egui::Shape::line(std::mem::take(run), Stroke::new(w, WHITE)));
+            } else {
+                run.clear();
+            }
+        };
+        let mut t = 0.0_f32;
+        while t <= theta_max {
+            let r = r_at(t);
+            let heavy = t > theta_max - tau;
+            if r < eye || heavy != run_heavy {
+                flush(&mut run, run_heavy);
+                run_heavy = heavy;
+            }
+            if r >= eye {
+                run.push(at(t, r));
+            }
+            // Step by arc length, so the outer whorls get the segments and the
+            // inner ones are not oversampled into sub-pixel slivers.
+            t += (SUTURE_STEP_PX / r.max(1.0)).clamp(0.004, 0.30);
         }
-        // Septa: one chamber wall per operator, spanning adjacent whorls at
-        // golden-angle stations, drawn as a dotted chain that thickens with
-        // the operator's live level. Bounded by the shell — nothing sticks
-        // out of the animal.
-        let golden_angle = tau * (1.0 - 1.0 / fibonacci_dsp::PHI);
-        for s in 0..NUM_OPS {
-            let a = (s as f32 * golden_angle) % tau;
-            let theta = a + tau; // the mid-shell whorl crossing
-            let r1 = r_at(theta);
-            let r2 = r_at(theta + tau).min(max_r * 0.9);
-            let dir = Vec2::new(a.cos(), a.sin());
-            let amp = self.env[s].min(1.0);
-            let dots = 3 + (amp * 9.0) as usize;
-            for d in 0..=dots {
-                let t = d as f32 / dots as f32;
-                let p = center + dir * (r1 + (r2 - r1) * t);
-                painter.rect_filled(
-                    Rect::from_center_size(p, Vec2::splat(2.0)),
-                    Rounding::ZERO,
-                    WHITE,
-                );
+        flush(&mut run, run_heavy);
+
+        // haunt's ghosts: the Ghost Line drawn. Each pass is the suture again,
+        // turned a further π/5 and stippled more sparsely — after five passes the
+        // echo is fully inverted against the drone that spawned it, which is
+        // exactly what five ghosts at π/5 look like. Drawn as dots because in
+        // strict 1-bit, sparseness is the only way to be faint.
+        let ghosts = (self.shadow_verb.haunt.clamp(0.0, 1.0) * GHOST_MAX).round() as u32;
+        for p in 1..=ghosts {
+            let turn = p as f32 * std::f32::consts::PI / 5.0;
+            // Thin with the ghost's own loop gain, one pass at a time.
+            let step = SUTURE_STEP_PX / GHOST_GAIN.powi(p as i32 * 4);
+            let mut gt = 0.0_f32;
+            while gt <= theta_max {
+                let r = r_at(gt);
+                if r >= eye {
+                    let a = gt + tilt + turn;
+                    painter.rect_filled(
+                        Rect::from_center_size(
+                            Pos2::new(
+                                (pole.x + a.cos() * r).round(),
+                                (pole.y + a.sin() * r).round(),
+                            ),
+                            Vec2::splat(1.0),
+                        ),
+                        Rounding::ZERO,
+                        WHITE,
+                    );
+                }
+                gt += (step / r.max(1.0)).clamp(0.004, 0.30);
+            }
+        }
+
+        // Septa and growth ribs, whorl by whorl from the outside in.
+        let chamber_counts = chambers_for(self.shadow.ratio_mode);
+        let mut chamber_index: u32 = 0;
+        for whorl in 0..SHELL_WHORLS {
+            let chambers = chamber_counts[whorl];
+            let outer_t = theta_max - whorl as f32 * tau;
+            let span = tau / chambers as f32;
+            for j in 0..chambers {
+                let t = outer_t - j as f32 * span;
+                let op = (chamber_index % NUM_OPS as u32) as usize;
+                chamber_index += 1;
+                if t < 0.0 {
+                    continue;
+                }
+                // Clipped to the umbilicus: a rib may end on it but never cross it.
+                let (r_in, r_out) = (r_at(t - tau).max(eye), r_at(t));
+                if r_out < eye + SHELL_MIN_PX {
+                    continue;
+                }
+                // The septum spans the whole whorl. Structural, so it keeps the
+                // base waviness.
+                rib(t, r_in.max(1.0), r_out, 1.0, span, 1.0);
+                // Growth ribs: more of them, reaching further in, as the
+                // operator gets louder. They stop short of the inner suture —
+                // what the reference does, and the depth cue.
+                let level = self.env[op].min(1.0);
+                let mut ribs = 1 + (level * SHELL_RIB_MAX).round() as u32;
+                // Thin the ribs out where a whorl is too finely divided to hold
+                // them: GoldenMirror puts 29 chambers on the innermost whorl,
+                // where ribs would sit 1.7 px apart and merge into a smudge.
+                // Below 3 px of spacing the chamber shows its septum only.
+                while ribs > 1 && span * r_out / (ribs as f32) < 3.0 {
+                    ribs -= 1;
+                }
+                let reach = ENGRAVE_REACH_MIN + ENGRAVE_REACH_RANGE * level;
+                for m in 1..ribs {
+                    let rt = t - span * m as f32 / ribs as f32;
+                    if rt < 0.0 {
+                        continue;
+                    }
+                    let (ri, ro) = (r_at(rt - tau).max(eye), r_at(rt));
+                    if ro < eye + SHELL_MIN_PX {
+                        continue;
+                    }
+                    rib(rt, ro - (ro - ri) * reach, ro, 1.0, span, SHELL_RIB_INNER);
+                }
+            }
+        }
+
+        // The aperture: the shell's mouth, at the terminal end of the suture.
+        rib(
+            theta_max,
+            r_at(theta_max - tau),
+            r_at(theta_max),
+            2.0,
+            tau / chamber_counts[0] as f32,
+            1.0,
+        );
+    }
+
+    /// Build the portrait's texture for the size it is actually drawn at.
+    fn fit_art(&mut self, ctx: &egui::Context, plinth: Rect) {
+        if let Some(size) = self.portrait_rect(plinth).map(|r| r.size()) {
+            fit_slot(ctx, &mut self.portrait, "portrait", size);
+        }
+    }
+
+    /// Space Z: the portrait plinth. Horizontal scanlines fill the field
+    /// (reference: the striped pixel-art portraits in Billy's image 5), and
+    /// the art — if a slot is filled — stands on them at a whole-number
+    /// scale, so one source pixel is always an exact square of screen pixels.
+    #[allow(clippy::needless_pass_by_ref_mut)]
+    fn draw_portrait(&self, painter: &egui::Painter, rect: Rect) {
+        let mut y = rect.min.y.ceil();
+        while y < rect.max.y {
+            painter.rect_filled(
+                Rect::from_min_size(Pos2::new(rect.min.x, y), Vec2::new(rect.width(), 1.0)),
+                Rounding::ZERO,
+                WHITE,
+            );
+            y += SCANLINE_PITCH;
+        }
+        if let (Some(art), Some(box_)) = (&self.portrait, self.portrait_rect(rect)) {
+            painter.image(
+                art.tex.id(),
+                box_,
+                Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+                WHITE,
+            );
+        }
+    }
+
+    /// The box the portrait occupies: centred on the plinth, aspect preserved.
+    fn portrait_rect(&self, rect: Rect) -> Option<Rect> {
+        let art = self.portrait.as_ref()?;
+        let size = art_box(art.size(), rect.size());
+        Some(Rect::from_min_size(
+            Pos2::new(
+                (rect.center().x - size.x * 0.5).round(),
+                (rect.center().y - size.y * 0.5).round(),
+            ),
+            Vec2::new(size.x.round(), size.y.round()),
+        ))
+    }
+
+    /// Re-resolve the portrait slot: it follows the dread band, and reloads
+    /// when the file changes on disk.
+    fn refresh_art(&mut self, ctx: &egui::Context) {
+        refresh_slot(
+            ctx,
+            &mut self.portrait,
+            portrait_candidates(self.dread),
+            "portrait",
+        );
+    }
+
+    /// The sky the Logalith hangs in, and its motion field. Drawn first, so the
+    /// shell occludes it — a star behind a solid white arm is simply not there.
+    ///
+    /// Six terms, composed in this order, because each later one wants to act on
+    /// the result of the earlier ones:
+    ///
+    /// 1. **Drift**, wrapped in normalised space so the field is seamless and
+    ///    endless. Bearing is the golden angle, so it slides along no axis.
+    /// 2. **Parallax wobble** — a per-layer Lissajous. Depth comes from the
+    ///    star's own hash, and near stars are both bigger and faster, which is
+    ///    the whole of parallax.
+    /// 3. **Curvature**, a barrel/pincushion coefficient breathing on an 89 s
+    ///    period: the field itself bulges and draws in.
+    /// 4. **Noise warp** — a smooth sum-of-products field in x, y and t, so the
+    ///    sky shears locally instead of only moving as a block.
+    /// 5. **Lensing** around the shell, deflection ∝ 1/d and capped.
+    /// 6. **Edge shimmer**, which also hides the wrap seam from (1).
+    fn draw_starfield(&self, painter: &egui::Painter, rect: Rect, pose: &ShellPose) {
+        let dot = |p: Pos2, size: f32| {
+            painter.rect_filled(
+                Rect::from_center_size(p, Vec2::splat(size)),
+                Rounding::ZERO,
+                WHITE,
+            );
+        };
+        let t = self.last_frame_time;
+        let ftau = std::f64::consts::TAU;
+        let tf = t as f32;
+        let size = rect.size();
+        let curve = SKY_CURVE * (t / SKY_CURVE_PERIOD_S * ftau).sin() as f32;
+        let (drift_x, drift_y) = (SKY_DRIFT_ANGLE.cos(), SKY_DRIFT_ANGLE.sin());
+
+        for i in 0..STAR_COUNT {
+            let h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let kind = (h >> 5) & 31;
+            // Depth: three layers. Near stars are the big ones, and they move
+            // most — so brightness and speed agree, as they must.
+            let depth = ((h >> 21) & 3) as f32 / 3.0;
+            let near = 0.35 + 0.65 * depth;
+            let phase = ((h >> 41) & 0xFFFF) as f64 / 65535.0 * ftau;
+
+            // (1) drift, wrapped
+            let mut fx = (((h >> 11) & 0xFFFF) as f32 / 65535.0
+                + tf * SKY_DRIFT * near * drift_x)
+                .rem_euclid(1.0);
+            let mut fy = (((h >> 27) & 0xFFFF) as f32 / 65535.0
+                + tf * SKY_DRIFT * near * drift_y)
+                .rem_euclid(1.0);
+            // Edge factor is taken from the wrapped position, before any
+            // displacement, so a star shimmers because of where it sits in the
+            // field rather than because the warp happened to shove it out.
+            let edge = (1.0 - (fx - 0.5).abs() * 2.0)
+                .min(1.0 - (fy - 0.5).abs() * 2.0)
+                .max(0.0);
+            let edge = (1.0 - edge / SKY_EDGE).clamp(0.0, 1.0);
+
+            // (2) parallax wobble
+            fx += (t / 34.0 * ftau + phase).sin() as f32 * SKY_WOBBLE * near;
+            fy += (t / 21.0 * ftau + phase).sin() as f32 * SKY_WOBBLE * near;
+
+            // (3) curvature of the whole field
+            let mut u = Vec2::new(fx - 0.5, fy - 0.5);
+            u *= 1.0 + curve * u.length_sq();
+
+            // (4) noise warp: smooth in space and time, and cheap
+            let (nx, ny) = (u.x * 6.283, u.y * 6.283);
+            u += Vec2::new(
+                (nx * 1.0 + (t * 0.11) as f32).sin() * (ny * 1.3 - (t * 0.07) as f32).cos(),
+                (ny * 0.8 - (t * 0.09) as f32).sin() * (nx * 1.7 + (t * 0.13) as f32).cos(),
+            ) * SKY_WARP;
+
+            let mut p = rect.center() + Vec2::new(u.x * size.x, u.y * size.y);
+
+            // (5) lensing around the shell
+            let off = p - pose.pivot;
+            let d = off.length();
+            if d > 0.5 {
+                let push =
+                    (SKY_LENS * pose.max_r * pose.max_r / d).min(SKY_LENS_MAX * pose.max_r);
+                p += off / d * push;
+            }
+
+            // (6) edge shimmer
+            if edge > 0.0 {
+                let rate = 1.3 + 1.7 * (((h >> 17) & 15) as f64 / 15.0);
+                let blink = 0.5 + 0.5 * (t * rate + phase).sin() as f32;
+                if blink < edge * SKY_SHIMMER_DUTY {
+                    continue;
+                }
+            }
+
+            let p = Pos2::new(p.x.round(), p.y.round());
+            match kind {
+                0 => {
+                    // A sparkle: the 4-point cross of the reference panels.
+                    dot(p, 2.0);
+                    for d in [2.0_f32, 3.0] {
+                        dot(p + Vec2::new(d, 0.0), 1.0);
+                        dot(p - Vec2::new(d, 0.0), 1.0);
+                        dot(p + Vec2::new(0.0, d), 1.0);
+                        dot(p - Vec2::new(0.0, d), 1.0);
+                    }
+                }
+                1..=5 => dot(p, 2.0),
+                _ => dot(p, 1.0),
             }
         }
     }
+
 
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
         let (response, painter) =
@@ -994,54 +2074,55 @@ impl App {
         }
     }
 
-    fn draw_scopes(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let (resp, painter) = ui.allocate_painter(
-                Vec2::new(ui.available_width() - 130.0, 72.0),
-                Sense::hover(),
-            );
-            let rect = resp.rect;
-            painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
-            let inner = rect.shrink(4.0);
-            let painter = painter.with_clip_rect(inner);
-            Self::draw_graticule(&painter, inner, 10, 4);
-            if self.scope.len() > 2 {
-                let n = self.scope.len();
-                let mut prev: Option<Pos2> = None;
-                for (i, &s) in self.scope.iter().enumerate() {
-                    let p = Pos2::new(
-                        inner.min.x + inner.width() * i as f32 / n as f32,
-                        inner.center().y - s.clamp(-1.0, 1.0) * inner.height() * 0.5,
-                    );
-                    if let Some(q) = prev {
-                        Self::beam_segment(&painter, q, p, i, false);
-                    }
-                    prev = Some(p);
-                }
-            }
-            // The phase image: a connected beam, clipped to its box.
-            let (resp2, painter2) =
-                ui.allocate_painter(Vec2::new(122.0, 72.0), Sense::hover());
-            let rect2 = resp2.rect;
-            painter2.rect_stroke(rect2, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
-            let inner2 = rect2.shrink(4.0);
-            let painter2 = painter2.with_clip_rect(inner2);
-            Self::draw_graticule(&painter2, inner2, 6, 6);
-            let c = inner2.center();
-            let scale = inner2.height() * 0.5;
-            let n = self.lissajous.len().max(1);
+    /// The mono waveform, full width of the footer.
+    fn draw_wave(&self, ui: &mut egui::Ui, height: f32) {
+        let (resp, painter) =
+            ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::hover());
+        let rect = resp.rect;
+        painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+        let inner = rect.shrink(4.0);
+        let painter = painter.with_clip_rect(inner);
+        Self::draw_graticule(&painter, inner, 10, 4);
+        if self.scope.len() > 2 {
+            let n = self.scope.len();
             let mut prev: Option<Pos2> = None;
-            for (i, &(l, r)) in self.lissajous.iter().enumerate() {
-                let x = (l - r) * std::f32::consts::FRAC_1_SQRT_2;
-                let y = (l + r) * std::f32::consts::FRAC_1_SQRT_2;
-                let p = c + Vec2::new(x, -y) * scale;
+            for (i, &s) in self.scope.iter().enumerate() {
+                let p = Pos2::new(
+                    inner.min.x + inner.width() * i as f32 / n as f32,
+                    inner.center().y - s.clamp(-1.0, 1.0) * inner.height() * 0.5,
+                );
                 if let Some(q) = prev {
-                    // Oldest third of the trace decays — phosphor persistence.
-                    Self::beam_segment(&painter2, q, p, i, i < n / 3);
+                    Self::beam_segment(&painter, q, p, i, false);
                 }
                 prev = Some(p);
             }
-        });
+        }
+    }
+
+    /// The phase image (L/R Lissajous, mid/side rotated): a connected beam,
+    /// clipped to its box, circular whatever the box's aspect.
+    fn draw_phase(&self, ui: &mut egui::Ui, height: f32) {
+        let (resp, painter) =
+            ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::hover());
+        let rect = resp.rect;
+        painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+        let inner = rect.shrink(4.0);
+        let painter = painter.with_clip_rect(inner);
+        Self::draw_graticule(&painter, inner, 6, 6);
+        let c = inner.center();
+        let scale = inner.width().min(inner.height()) * 0.5;
+        let n = self.lissajous.len().max(1);
+        let mut prev: Option<Pos2> = None;
+        for (i, &(l, r)) in self.lissajous.iter().enumerate() {
+            let x = (l - r) * std::f32::consts::FRAC_1_SQRT_2;
+            let y = (l + r) * std::f32::consts::FRAC_1_SQRT_2;
+            let p = c + Vec2::new(x, -y) * scale;
+            if let Some(q) = prev {
+                // Oldest third of the trace decays — phosphor persistence.
+                Self::beam_segment(&painter, q, p, i, i < n / 3);
+            }
+            prev = Some(p);
+        }
     }
 
     /// A small bordered chip for the header strip (WoH top-bar style).
@@ -1060,6 +2141,121 @@ impl App {
             ui.label(egui::RichText::new(text).color(BLACK).monospace());
         });
     }
+
+    /// The event log, as a ticker across the header strip (Billy, 2026-08-04:
+    /// "a kind of marquee box at the top"). The most recent `MARQUEE_LINES`
+    /// measurements loop leftward at a constant rate, advanced in **whole
+    /// pixels** — a sub-pixel scroll is a blurry scroll, which the no-AA rule
+    /// forbids. The routine murmuring along the top is the same sphexish log
+    /// it always was; only its furniture changed.
+    fn draw_marquee(&self, painter: &egui::Painter, rect: Rect, now: f64) {
+        painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+        let inner = rect.shrink(3.0);
+        if inner.width() < 8.0 || self.log.is_empty() {
+            return;
+        }
+        let text = self
+            .log
+            .iter()
+            .take(MARQUEE_LINES)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("   ·   ");
+        let painter = painter.with_clip_rect(inner);
+        let galley = painter.layout_no_wrap(text, FontId::monospace(11.0), WHITE);
+        // A short gap, not a screenful: a screenful left the band blank for a
+        // third of every cycle (measured off Billy's 00:00:57 screenshot —
+        // ~23 s of nothing out of 58 s). The ticker stays populated now.
+        let period = (galley.size().x + 80.0).max(1.0);
+        let shift = ((now * MARQUEE_PX_PER_SEC).floor() as f32).rem_euclid(period);
+        let y = (inner.center().y - galley.size().y * 0.5).round();
+        let x = (inner.max.x - shift).round();
+        painter.galley(Pos2::new(x, y), galley.clone(), WHITE);
+        painter.galley(Pos2::new(x + period, y), galley, WHITE);
+    }
+
+    /// How long the reveal dwells on character `i`, in seconds.
+    ///
+    /// Billy asked for the teletype "but humanised", and the two things that
+    /// separate a person from a metronome are unevenness and punctuation: the
+    /// per-character dwell is jittered ±`TYPE_JITTER` by a hash of the index,
+    /// and the reveal holds after a stop the way someone drawing breath does
+    /// — longest at a full stop, less at a comma or a dash. The hash means
+    /// there is no clock and no RNG in it, so a given box types with exactly
+    /// the same rhythm every time it comes round.
+    fn char_dwell(i: usize, prev: Option<char>) -> f32 {
+        let base = 1.0 / TYPE_CPS;
+        let h = (i as u64).wrapping_mul(2654435761) ^ 0x9E37_79B9;
+        let unit = ((h >> 13) & 0xFFFF) as f32 / 65535.0;
+        let jitter = 1.0 + TYPE_JITTER * (unit * 2.0 - 1.0);
+        let hold = match prev {
+            Some('.') | Some('!') | Some('?') => 9.0,
+            Some('\n') => 5.0,
+            Some(',') | Some(';') | Some(':') | Some('—') => 4.0,
+            _ => 0.0,
+        };
+        base * (jitter + hold)
+    }
+
+    /// Which pool speaks right now: the dread band picks it, falling back
+    /// gracefully while Billy's pools are unwritten.
+    fn active_pool(&self) -> &Vec<String> {
+        match self.dread {
+            Dread::Critical if !self.crit_lines.is_empty() => &self.crit_lines,
+            Dread::Critical | Dread::Low if !self.low_lines.is_empty() => &self.low_lines,
+            _ => &self.voice_lines,
+        }
+    }
+
+    /// The voice cell: the box types itself out, then holds. Clicking skips a
+    /// reveal in progress, or advances to the next box once it has finished.
+    fn draw_voice(&mut self, ui: &mut egui::Ui, now: f64, dt: f32) {
+        let pool = self.active_pool();
+        if pool.is_empty() {
+            return;
+        }
+        let selected = pool[self.voice_index % pool.len()].clone();
+        // Any change of box — advance, pool switch, or Billy editing the file
+        // under us — restarts the reveal from the first character.
+        if selected != self.voice_typing {
+            self.voice_typing = selected;
+            self.voice_revealed = 0;
+            self.voice_credit = 0.0;
+        }
+        let chars: Vec<char> = self.voice_typing.chars().collect();
+        self.voice_credit += dt;
+        while self.voice_revealed < chars.len() {
+            let prev = self.voice_revealed.checked_sub(1).map(|k| chars[k]);
+            let cost = Self::char_dwell(self.voice_revealed, prev);
+            if self.voice_credit < cost {
+                break;
+            }
+            self.voice_credit -= cost;
+            self.voice_revealed += 1;
+        }
+        let complete = self.voice_revealed >= chars.len();
+        if complete && now - self.voice_last_advance > 45.0 {
+            self.voice_last_advance = now;
+            self.voice_index = self.voice_index.wrapping_add(1);
+        } else if !complete {
+            // The hold timer starts when the last character lands, not when
+            // the box was selected — a long paragraph gets its full 45 s.
+            self.voice_last_advance = now;
+        }
+        let visible: String = chars[..self.voice_revealed].iter().collect();
+        // The whole cell is the click target, not just the glyphs.
+        let resp = ui.interact(ui.max_rect(), ui.id().with("voice-box"), Sense::click());
+        ui.label(egui::RichText::new(visible).color(WHITE));
+        if resp.clicked() {
+            // A click always *generates*: the next box, typed from zero. The
+            // old behaviour skipped an in-progress reveal to its end, which
+            // hid the single thing this box exists to do — and since a box
+            // takes 9–11 s to type and then holds 45 s, skipping meant Billy
+            // never once saw it happen (2026-08-04).
+            self.voice_index = self.voice_index.wrapping_add(1);
+            self.voice_last_advance = now;
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -1076,14 +2272,69 @@ impl eframe::App for App {
         self.drain_viz();
         ctx.request_repaint();
         let now = ctx.input(|i| i.time);
+        // The reveal's own timebase. Clamped so a stalled frame (a resize, a
+        // device change) doesn't dump a paragraph out at once.
+        let dt = if self.last_frame_time > 0.0 {
+            ((now - self.last_frame_time) as f32).clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+        self.last_frame_time = now;
+        // The shell's ripple phases are **integrated**, not derived from
+        // `elapsed × rate`. Multiplying accumulated time by a rate makes the
+        // phase jump whenever the rate changes, by an amount proportional to how
+        // long the app has been running: moving the Rip slider snapped the whole
+        // shell, and the snap grew worse all session. Accumulating `dt × rate`
+        // instead means a rate change alters the speed from here on and nothing
+        // else. Wrapped, so f32 keeps its precision over a long session.
+        let rate = 1.0 + AGITATE_SPEED * self.shadow.rip.clamp(0.0, 1.0);
+        let tau = std::f32::consts::TAU;
+        self.ripple_phase =
+            (self.ripple_phase + dt * RIPPLE_SPEED as f32 * rate).rem_euclid(tau);
+        self.suture_phase =
+            (self.suture_phase + dt * SUTURE_SPEED as f32 * rate).rem_euclid(tau);
+        // The shell's scale chases `master` through a long one-pole. Exponential
+        // against real elapsed time, so the swell runs at the same speed whatever
+        // the frame rate is doing.
+        let k = 1.0 - (-dt / SCALE_SMOOTH_S).exp();
+        self.shell_scale += (scale_for(self.shadow.master_level) - self.shell_scale) * k;
+        // The rock, integrated for the same reason the ripple is — and divided by
+        // the scale, so a bigger shell drifts more slowly. Periods are
+        // `ROCK_PERIOD_S / φ^i`, which is why the phases advance at φ^i × the base
+        // rate.
+        let scale = self.shell_scale.max(0.05);
+        for (i, p) in self.rock_phase.iter_mut().enumerate() {
+            let rate = (std::f64::consts::TAU / ROCK_PERIOD_S) as f32
+                * PHI.powi(i as i32)
+                / scale;
+            *p = (*p + dt * rate).rem_euclid(tau);
+        }
+        // The spin: a slow continuous turn in one direction, also slowed by
+        // scale. An oscillating tilt of a few degrees is nearly invisible on a
+        // form this close to rotationally symmetric — a spiral leaned 4° looks
+        // like the same spiral. A turn that keeps going does not (Billy: "shell
+        // also appears to not be rotating").
+        self.spin = (self.spin + dt * (tau / ROCK_SPIN_S as f32) / scale).rem_euclid(tau);
+        // INDEX opens and closes the umbilicus; smoothed so it dilates.
+        let ki = 1.0 - (-dt / INDEX_SMOOTH_S).exp();
+        self.index_smooth += (self.shadow.index.clamp(0.0, 1.0) - self.index_smooth) * ki;
         self.update_dread(now);
+        // Everything the critical band drives ramps through this.
+        let kd = 1.0 - (-dt / DREAD_SMOOTH_S).exp();
+        let target = if self.dread == Dread::Critical { 1.0 } else { 0.0 };
+        self.dread_level += (target - self.dread_level) * kd;
+        if self.portrait_dread != self.dread {
+            self.portrait_dread = self.dread;
+            self.refresh_art(ctx);
+        }
 
-        // Hot-reload Billy's voice file every ~2 s.
+        // Hot-reload Billy's voice file every ~2 s, and Space Z's art with it.
         if now - self.voice_last_reload > 2.0 {
             self.voice_last_reload = now;
             self.voice_lines = load_lines("voice.txt");
             self.low_lines = load_lines("integrity_low.txt");
             self.crit_lines = load_lines("integrity_critical.txt");
+            self.refresh_art(ctx);
         }
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
@@ -1095,55 +2346,40 @@ impl eframe::App for App {
                         .font(FontId::monospace(16.0))
                         .color(WHITE),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    Self::header_chip(ui, concat!("v", env!("CARGO_PKG_VERSION")));
-                    Self::header_chip(ui, &format!("{:.0}k", self.rig.sample_rate / 1000.0));
-                    if self.rig.midi_connected {
-                        Self::header_chip(ui, "midi");
-                    }
-                    ui.label(
-                        egui::RichText::new(&self.rig.device_name)
-                            .color(WHITE)
-                            .font(FontId::monospace(11.0)),
-                    );
-                });
+                // Everything to the right of the title is placed first, so the
+                // marquee can have exactly the gap that survives it.
+                let gap_start = ui.cursor().min.x;
+                let right = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        Self::header_chip(ui, concat!("v", env!("CARGO_PKG_VERSION")));
+                        Self::header_chip(ui, &format!("{:.0}k", self.rig.sample_rate / 1000.0));
+                        if self.rig.midi_connected {
+                            Self::header_chip(ui, "midi");
+                        }
+                        ui.label(
+                            egui::RichText::new(&self.rig.device_name)
+                                .color(WHITE)
+                                .font(FontId::monospace(11.0)),
+                        );
+                    })
+                    .response
+                    .rect;
+                let row = ui.min_rect();
+                let band = Rect::from_min_max(
+                    Pos2::new(gap_start + CELL_GUTTER, row.min.y),
+                    Pos2::new(right.min.x - CELL_GUTTER, row.max.y),
+                );
+                if band.width() > 40.0 {
+                    self.draw_marquee(ui.painter(), band, now);
+                }
             });
         });
 
-        egui::TopBottomPanel::bottom("log").min_height(150.0).show(ctx, |ui| {
-            self.draw_scopes(ui);
-            ui.add_space(4.0);
-            // Billy's voice, if the files exist: the pool follows the dread
-            // band, falling back gracefully while pools are unwritten.
-            let pool = match self.dread {
-                Dread::Critical if !self.crit_lines.is_empty() => &self.crit_lines,
-                Dread::Critical | Dread::Low if !self.low_lines.is_empty() => &self.low_lines,
-                _ => &self.voice_lines,
-            };
-            if !pool.is_empty() {
-                if now - self.voice_last_advance > 45.0 {
-                    self.voice_last_advance = now;
-                    self.voice_index = self.voice_index.wrapping_add(1);
-                }
-                let text = pool[self.voice_index % pool.len()].clone();
-                let resp = egui::Frame::none()
-                    .stroke(Stroke::new(1.0_f32, WHITE))
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(egui::RichText::new(text).color(WHITE));
-                    })
-                    .response
-                    .interact(Sense::click());
-                if resp.clicked() {
-                    self.voice_index = self.voice_index.wrapping_add(1);
-                    self.voice_last_advance = now;
-                }
-                ui.add_space(2.0);
-            }
-            for line in self.log.iter().take(4) {
-                ui.label(egui::RichText::new(line).color(WHITE));
-            }
+        // The footer is the waveform alone, full width: the voice moved into
+        // the centerpiece, the log into the header marquee, and the phase
+        // image into the right panel (Billy's spot G).
+        egui::TopBottomPanel::bottom("scopes").min_height(84.0).show(ctx, |ui| {
+            self.draw_wave(ui, 74.0);
         });
 
         egui::SidePanel::left("stats").exact_width(195.0).show(ctx, |ui| {
@@ -1183,26 +2419,46 @@ impl eframe::App for App {
             let m = &mut self.shadow_melody;
             let mut changed = false;
             let mut log_line: Option<String> = None;
-            let on_label = if m.enabled { "S&H ON" } else { "S&H OFF" };
-            let b = egui::Button::new(
-                egui::RichText::new(on_label).color(if m.enabled { BLACK } else { WHITE }),
-            )
-            .fill(if m.enabled { WHITE } else { BLACK })
-            .min_size(Vec2::new(70.0, 20.0));
-            if ui.add(b).clicked() {
-                m.enabled = !m.enabled;
-                changed = true;
-                log_line = Some(if m.enabled {
-                    format!(
-                        "sample & hold engaged: {} at {:.3} hz, range {}.",
-                        m.tuning.name(),
-                        m.rate_hz,
-                        m.range_degrees
+            // The switch and its hold source share a row: the source belongs
+            // to the S&H, and on its own line it left a hole (Billy: "move
+            // golden and random together theres empty space").
+            ui.horizontal(|ui| {
+                let on_label = if m.enabled { "S&H ON" } else { "S&H OFF" };
+                let b = egui::Button::new(
+                    egui::RichText::new(on_label).color(if m.enabled { BLACK } else { WHITE }),
+                )
+                .fill(if m.enabled { WHITE } else { BLACK })
+                .min_size(Vec2::new(70.0, 20.0));
+                if ui.add(b).clicked() {
+                    m.enabled = !m.enabled;
+                    changed = true;
+                    log_line = Some(if m.enabled {
+                        format!(
+                            "sample & hold engaged: {} at {:.3} hz, range {}.",
+                            m.tuning.name(),
+                            m.rate_hz,
+                            m.range_degrees
+                        )
+                    } else {
+                        "sample & hold released. drone holds its last pitch.".into()
+                    });
+                }
+                for source in [HoldSource::GoldenWeyl, HoldSource::Xorshift] {
+                    let active = m.source == source;
+                    let name = match source {
+                        HoldSource::GoldenWeyl => "golden",
+                        HoldSource::Xorshift => "random",
+                    };
+                    let b = egui::Button::new(
+                        egui::RichText::new(name).color(if active { BLACK } else { WHITE }),
                     )
-                } else {
-                    "sample & hold released. drone holds its last pitch.".into()
-                });
-            }
+                    .fill(if active { WHITE } else { BLACK });
+                    if ui.add(b).clicked() && !active {
+                        m.source = source;
+                        changed = true;
+                    }
+                }
+            });
             ui.horizontal_wrapped(|ui| {
                 for tuning in Tuning::ALL {
                     let active = m.tuning == tuning;
@@ -1273,23 +2529,6 @@ impl eframe::App for App {
                 m.root_midi = root as u8;
                 changed = true;
             }
-            ui.horizontal(|ui| {
-                for source in [HoldSource::GoldenWeyl, HoldSource::Xorshift] {
-                    let active = m.source == source;
-                    let name = match source {
-                        HoldSource::GoldenWeyl => "golden",
-                        HoldSource::Xorshift => "random",
-                    };
-                    let b = egui::Button::new(
-                        egui::RichText::new(name).color(if active { BLACK } else { WHITE }),
-                    )
-                    .fill(if active { WHITE } else { BLACK });
-                    if ui.add(b).clicked() && !active {
-                        m.source = source;
-                        changed = true;
-                    }
-                }
-            });
             if changed {
                 self.send_melody();
             }
@@ -1390,7 +2629,9 @@ impl eframe::App for App {
             verb_changed |= ui.add(egui::Slider::new(&mut v.damp, 0.0..=0.99).text("damp")).changed();
             verb_changed |= ui
                 .horizontal(|ui| {
-                    ui.add_space(2.0 + t);
+                    // Rounded: a fractional offset would put the widget on a
+                    // half-pixel, and feathering is off.
+                    ui.add_space(2.0 + t.round());
                     ui.add(egui::Slider::new(&mut v.haunt, 0.0..=1.0).text("haunt"))
                 })
                 .inner
@@ -1423,6 +2664,14 @@ impl eframe::App for App {
                     }
                 }
             });
+            // Spot G: the phase image takes whatever the panel has left, so
+            // the waveform can own the full width of the footer.
+            ui.add_space(6.0);
+            let left = ui.available_height() - 22.0;
+            if left > 60.0 {
+                Self::inverted_strip(ui, "PHASE");
+                self.draw_phase(ui, left);
+            }
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -1436,12 +2685,58 @@ impl eframe::App for App {
                     mode_name(self.shadow.ratio_mode).to_uppercase()
                 ),
             );
-            let body_h = ui.available_height();
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(330.0);
-                    ui.style_mut().spacing.slider_width = 150.0;
-                    ui.add_space(6.0);
+            ui.add_space(CELL_GUTTER);
+            // Four cells, each in its own hard frame (Billy's annotation:
+            // "seperate each element in the middle"). Both cuts are golden:
+            // the top row takes the major section of the height and the left
+            // column the minor section of the width — floored at the width the
+            // sliders actually need, because a golden proportion that clips a
+            // control is just a clipped control.
+            let body = ui.available_rect_before_wrap();
+            let col_w = (body.width() * (1.0 - GOLDEN_MAJOR))
+                .max(CONTROL_COL_MIN)
+                .min(body.width() * 0.6)
+                .floor();
+            let row_h = (body.height() * GOLDEN_MAJOR).floor();
+            let split_x = body.min.x + col_w;
+            let split_y = body.min.y + row_h;
+            let g = CELL_GUTTER;
+            // X: controls. Y: the Logalith. Z: the portrait. W: the voice.
+            let cell_x = Rect::from_min_max(body.min, Pos2::new(split_x - g, split_y - g));
+            let cell_y = Rect::from_min_max(
+                Pos2::new(split_x, body.min.y),
+                Pos2::new(body.max.x, split_y - g),
+            );
+            let cell_z = Rect::from_min_max(
+                Pos2::new(body.min.x, split_y),
+                Pos2::new(split_x - g, body.max.y),
+            );
+            let cell_w = Rect::from_min_max(Pos2::new(split_x, split_y), body.max);
+            for cell in [cell_x, cell_y, cell_z, cell_w] {
+                ui.painter()
+                    .rect_stroke(cell, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
+            }
+            // Sky, then the entity over it — both from one pose, so the
+            // field's lensing bends around the shell that actually gets drawn.
+            let stage = cell_y.shrink(4.0);
+            self.fit_art(ctx, cell_z.shrink(4.0));
+            let sky = ui.painter().with_clip_rect(cell_y.shrink(3.0));
+            let pose = self.shell_pose(stage);
+            self.draw_starfield(&sky, stage, &pose);
+            self.draw_monolith(&sky, stage, &pose);
+            self.draw_portrait(
+                &ui.painter().with_clip_rect(cell_z.shrink(3.0)),
+                cell_z.shrink(4.0),
+            );
+            ui.allocate_new_ui(
+                egui::UiBuilder::new().max_rect(cell_w.shrink(8.0)),
+                |ui| self.draw_voice(ui, now, dt),
+            );
+            ui.allocate_new_ui(
+                egui::UiBuilder::new().max_rect(cell_x.shrink(8.0)),
+                |ui| {
+                    ui.style_mut().spacing.slider_width =
+                        (cell_x.width() - 175.0).clamp(90.0, 220.0);
             ui.horizontal(|ui| {
                 let mut clicked: Option<usize> = None;
                 for (i, roman) in ROMAN.iter().enumerate() {
@@ -1474,7 +2769,9 @@ impl eframe::App for App {
             let t = self.tremble();
             let r = ui
                 .horizontal(|ui| {
-                    ui.add_space(2.0 + t);
+                    // Rounded: a fractional offset would put the widget on a
+                    // half-pixel, and feathering is off.
+                    ui.add_space(2.0 + t.round());
                     ui.add(egui::Slider::new(&mut self.shadow.rip, 0.0..=1.0).text("RIP"))
                 })
                 .inner;
@@ -1508,12 +2805,46 @@ impl eframe::App for App {
             if let Some(line) = log_line {
                 self.push_log(line);
             }
-                });
-                let (resp, painter) =
-                    ui.allocate_painter(Vec2::new(ui.available_width(), body_h), Sense::hover());
-                painter.rect_stroke(resp.rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
-                self.draw_monolith(&painter, resp.rect);
-            });
+                    // Marginalia (design pass item 7): the real models behind
+                    // the sliders above, in the annotated-notebook register.
+                    // Every line is checkable against README's mathematical
+                    // models — this is measurement, not wallpaper, and it is
+                    // what fills the space Billy flagged as empty.
+                    ui.add_space(8.0);
+                    let compiled = compile(self.shadow.algorithm);
+                    for line in [
+                        format!("index   x^(φ^(d−2))   d=2,3,4 → 1  {:.3}  {:.3}", PHI, PHI * PHI),
+                        format!(
+                            "levels  1/φ^(d−1)     → {:.3}  {:.3}  {:.3}",
+                            1.0 / PHI,
+                            1.0 / (PHI * PHI),
+                            1.0 / (PHI * PHI * PHI)
+                        ),
+                        "rip     φ×29 ms = 46.9 ms, π/5 per pass".to_string(),
+                        "fb      avg(y₋₁, y₋₂) → π rad at fb 1".to_string(),
+                        format!("mix     mean of {} carrier(s)", compiled.carrier_count),
+                        format!(
+                            "glide   one-pole, {:.2} s → {:.1} hz",
+                            self.shadow.glide_seconds, self.drone_hz
+                        ),
+                    ] {
+                        ui.label(
+                            egui::RichText::new(line)
+                                .font(FontId::monospace(10.0))
+                                .color(WHITE),
+                        );
+                    }
+                    // Whatever is still left becomes ornament rather than void
+                    // (Billy: "anything but large areas of nothing"). Fixed
+                    // low density — it carries no measurement and must never
+                    // be mistaken for one.
+                    let rest = ui.available_size();
+                    if rest.y > 10.0 {
+                        let (resp, painter) = ui.allocate_painter(rest, Sense::hover());
+                        dither_rect(&painter, resp.rect, 0.12, 3.0);
+                    }
+                },
+            );
         });
     }
 }
@@ -1537,4 +2868,337 @@ fn main() -> eframe::Result<()> {
             }
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fibonacci_dsp::PLASTIC;
+
+    const TAU: f32 = std::f32::consts::TAU;
+
+    /// The chamber counts are the documented integer sequences, and each converges
+    /// on its own mode's constant. This is the shell's claim about what it is; if
+    /// it drifts, the shell is lying.
+    #[test]
+    fn chamber_sequences_converge_on_their_modes_constant() {
+        assert_eq!(chambers_for(RatioMode::Harmonic), [30, 24, 18, 12, 6]);
+        assert_eq!(chambers_for(RatioMode::Fibonacci), [34, 21, 13, 8, 5]);
+        assert_eq!(chambers_for(RatioMode::Golden), [29, 18, 11, 7, 4]);
+        assert_eq!(chambers_for(RatioMode::GoldenMirror), [4, 7, 11, 18, 29]);
+        assert_eq!(chambers_for(RatioMode::Plastic), [28, 21, 16, 12, 9]);
+
+        // Fibonacci and Lucas both converge on phi; Padovan on the plastic number.
+        let ratio = |c: [u32; SHELL_WHORLS]| c[0] as f32 / c[1] as f32;
+        assert!((ratio(chambers_for(RatioMode::Fibonacci)) - PHI).abs() < 0.03);
+        assert!((ratio(chambers_for(RatioMode::Golden)) - PHI).abs() < 0.03);
+        assert!((ratio(chambers_for(RatioMode::Plastic)) - PLASTIC).abs() < 0.02);
+        // Harmonic is the harmonic series, so consecutive terms sit at 5:4.
+        assert!((ratio(chambers_for(RatioMode::Harmonic)) - 1.25).abs() < 1e-6);
+        // Mirror is Golden reversed, exactly.
+        let mut g = chambers_for(RatioMode::Golden);
+        g.reverse();
+        assert_eq!(g, chambers_for(RatioMode::GoldenMirror));
+    }
+
+    /// Every whorl in a mode carries a *different* number of chambers, so no two
+    /// whorls share an angular division and the per-operator assignment cannot
+    /// line up into radial stripes. Counts are also strictly monotonic, so the
+    /// shell reads as opening out (or closing in, for mirror) rather than as an
+    /// arbitrary set.
+    ///
+    /// This test previously asserted that no count was a multiple of `NUM_OPS`,
+    /// which was simply false — harmonic's 30 and fibonacci's 5 both are — and was
+    /// not the property that mattered anyway. Chambers are numbered by a running
+    /// counter across the whole shell, so what would produce a stripe is two whorls
+    /// sharing both a count and a starting operator, not a count being divisible.
+    #[test]
+    fn chamber_counts_never_repeat_within_a_mode() {
+        for mode in RatioMode::ALL {
+            let c = chambers_for(mode);
+            for i in 0..c.len() {
+                for j in i + 1..c.len() {
+                    assert!(
+                        c[i] != c[j],
+                        "{}: whorls {} and {} both have {} chambers",
+                        mode_name(mode),
+                        i,
+                        j,
+                        c[i]
+                    );
+                }
+            }
+            let ascending = c.windows(2).all(|w| w[0] < w[1]);
+            let descending = c.windows(2).all(|w| w[0] > w[1]);
+            assert!(
+                ascending || descending,
+                "{}: {:?} is neither opening out nor closing in",
+                mode_name(mode),
+                c
+            );
+            // Any whorl with at least NUM_OPS chambers must give every operator a
+            // chamber, or an operator would be invisible on that whorl.
+            let mut index = 0u32;
+            for &n in c.iter() {
+                let mut seen = [false; NUM_OPS];
+                for _ in 0..n {
+                    seen[(index % NUM_OPS as u32) as usize] = true;
+                    index += 1;
+                }
+                if n >= NUM_OPS as u32 {
+                    assert!(
+                        seen.iter().all(|&s| s),
+                        "{}: a whorl of {} chambers missed an operator",
+                        mode_name(mode),
+                        n
+                    );
+                }
+            }
+        }
+    }
+
+    /// The shell doubles every whorl, exactly, and reaches 1.0 at its mouth.
+    #[test]
+    fn growth_is_a_doubling_per_whorl() {
+        let theta_max = SHELL_TURNS * TAU;
+        assert!((shell_unit_r(theta_max, 0.0, 0.0) - 1.0).abs() < 1e-5);
+        for k in 1..=SHELL_WHORLS {
+            let expected = 1.0 / SHELL_GROWTH.powi(k as i32);
+            let got = shell_unit_r(theta_max - k as f32 * TAU, 0.0, 0.0);
+            assert!(
+                (got - expected).abs() < 1e-5,
+                "whorl {k}: expected {expected}, got {got}"
+            );
+        }
+    }
+
+    /// The suture's undulation stays inside its stated bound, so the silhouette
+    /// measurement — which inflates the smooth spiral by SUTURE_WAVE rather than
+    /// tracking the moving curve — really does contain it.
+    #[test]
+    fn suture_undulation_is_bounded() {
+        let theta_max = SHELL_TURNS * TAU;
+        let smooth = |t: f32| SHELL_GROWTH.powf((t - theta_max) / TAU);
+        for i in 0..2000 {
+            let t = theta_max * i as f32 / 2000.0;
+            for ph in [0.0, 1.0, 2.5, 4.0] {
+                let ratio = shell_unit_r(t, ph, SUTURE_CYCLES_OPEN) / smooth(t);
+                assert!(
+                    ratio <= 1.0 + SUTURE_WAVE + 1e-4 && ratio >= 1.0 - SUTURE_WAVE - 1e-4,
+                    "undulation {ratio} outside +-{SUTURE_WAVE}"
+                );
+            }
+        }
+    }
+
+    /// A spiral's silhouette is not centred on its pole. That is the defect that
+    /// once threw the shell into a corner, so the offset is asserted to be real and
+    /// the bounds to actually contain the curve.
+    #[test]
+    fn silhouette_is_offset_from_the_pole_and_contains_the_curve() {
+        let (lo, hi) = shell_unit_bounds();
+        let mid = (lo + hi) * 0.5;
+        assert!(
+            mid.length() > 0.05,
+            "silhouette centre sits {mid:?} from the pole — if this is ~0 the \
+             centring correction is no longer needed and should be removed"
+        );
+        let theta_max = SHELL_TURNS * TAU;
+        for i in 0..4000 {
+            let t = theta_max * i as f32 / 4000.0;
+            let r = shell_unit_r(t, 1.7, SUTURE_CYCLES_OPEN);
+            let p = Vec2::new(t.cos(), t.sin()) * r;
+            assert!(
+                p.x >= lo.x - 1e-3
+                    && p.x <= hi.x + 1e-3
+                    && p.y >= lo.y - 1e-3
+                    && p.y <= hi.y + 1e-3,
+                "point {p:?} escapes bounds {lo:?}..{hi:?}"
+            );
+        }
+    }
+
+    /// Master maps to scale monotonically across the documented range, and the
+    /// ceiling is above 1.0 — the shell is *meant* to overrun its panel.
+    #[test]
+    fn scale_spans_its_range_monotonically() {
+        assert!((scale_for(0.0) - SCALE_MIN).abs() < 1e-6);
+        assert!((scale_for(1.0) - SCALE_MAX).abs() < 1e-6);
+        assert!(SCALE_MAX > 1.0, "the ceiling must overrun the fit");
+        assert!(SCALE_MIN > 0.0, "silence must shrink the shell, not erase it");
+        let mut prev = f32::MIN;
+        for i in 0..=20 {
+            let s = scale_for(i as f32 / 20.0);
+            assert!(s > prev);
+            prev = s;
+        }
+        // Out-of-range input is clamped, never extrapolated.
+        assert_eq!(scale_for(-1.0), scale_for(0.0));
+        assert_eq!(scale_for(9.0), scale_for(1.0));
+    }
+
+    /// **The invariant that keeps the shell legible.** Neighbouring ribs sit a
+    /// fraction of a chamber apart and carry the same wave at slightly different
+    /// phases; if that phase difference displaces them by more than their spacing
+    /// they cross, and the engraving turns to spaghetti. Checked for every ratio
+    /// mode, every whorl, at full rib density — the case with the least room.
+    #[test]
+    fn ribs_never_cross_their_neighbours() {
+        let ribs_per_chamber = 1.0 + SHELL_RIB_MAX;
+        for mode in RatioMode::ALL {
+            for (whorl, &n) in chambers_for(mode).iter().enumerate() {
+                let r_out = 1.0 / SHELL_GROWTH.powi(whorl as i32);
+                let span = TAU / n as f32;
+                let rib_gap = span / ribs_per_chamber;
+                // The phase gradient is scaled by radius (constant wavelength in
+                // pixels), which is precisely what protects the tight inner whorls.
+                let dphase = RIPPLE_WRAP * r_out * rib_gap;
+                let mut worst: f32 = 0.0;
+                for i in 0..=64 {
+                    let u = i as f32 / 64.0;
+                    for along in [RIPPLE_ALONG_DAMPED, RIPPLE_ALONG_OPEN] {
+                        let a = rib_offset(u, span, 1.0, along, 0.0);
+                        let b = rib_offset(u, span, 1.0, along, dphase);
+                        worst = worst.max((a - b).abs());
+                    }
+                }
+                assert!(
+                    worst < rib_gap,
+                    "{}: whorl {} ({} chambers) diverges {:.4} rad against {:.4} of \
+                     spacing — ribs would cross",
+                    mode_name(mode),
+                    whorl,
+                    n,
+                    worst,
+                    rib_gap
+                );
+            }
+        }
+    }
+
+    /// The span cap stops a coarsely divided whorl throwing a rib across the shell.
+    /// GoldenMirror's outer whorl — 4 chambers, 1.57 rad — is the case that forces
+    /// the cap to exist.
+    #[test]
+    fn span_cap_bounds_displacement_on_coarse_whorls() {
+        let coarse = TAU / 4.0;
+        assert!(coarse > SHELL_SPAN_CAP, "this test's premise has gone stale");
+        let mut worst: f32 = 0.0;
+        for i in 0..=200 {
+            let u = i as f32 / 200.0;
+            for ph in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
+                let o = rib_offset(u, coarse, SHELL_RIB_INNER, RIPPLE_ALONG_OPEN, ph);
+                worst = worst.max(o.abs());
+            }
+        }
+        // A rib spans one whorl, so its length is (1 - 1/growth) of its outer
+        // radius. Sideways travel must stay under that, or it sweeps through the
+        // neighbouring chambers instead of bending.
+        let rib_len_frac = 1.0 - 1.0 / SHELL_GROWTH;
+        assert!(
+            worst < rib_len_frac,
+            "displacement {worst:.3} rad exceeds the rib's own length fraction \
+             {rib_len_frac:.3} — the span cap is not doing its job"
+        );
+    }
+
+    /// Both rib ends stay pinned to their sutures at any phase: the ripple and the
+    /// S-bend are windowed, so only the lean survives at the ends.
+    #[test]
+    fn rib_ends_stay_pinned() {
+        for span in [TAU / 34.0, TAU / 4.0, TAU / 29.0] {
+            for ph in [0.0, 0.7, 1.9, 3.3, 5.5] {
+                for waviness in [1.0, SHELL_RIB_INNER] {
+                    let outer = rib_offset(1.0, span, waviness, RIPPLE_ALONG_OPEN, ph);
+                    assert!(
+                        outer.abs() < 1e-5,
+                        "outer end wandered {outer} — it must sit on its suture"
+                    );
+                    let inner = rib_offset(0.0, span, waviness, RIPPLE_ALONG_OPEN, ph);
+                    let lean = -SHELL_RIB_SWEEP * span.min(SHELL_SPAN_CAP);
+                    assert!((inner - lean).abs() < 1e-5, "inner end: {inner} vs {lean}");
+                }
+            }
+        }
+    }
+
+    /// The growth ribs wave harder than the septa, but the *lean* is shared — which
+    /// is what keeps the two families from crossing each other.
+    #[test]
+    fn inner_ribs_wave_more_but_lean_the_same() {
+        let span = TAU / 34.0;
+        let mut septum: f32 = 0.0;
+        let mut inner: f32 = 0.0;
+        for i in 0..=100 {
+            let u = i as f32 / 100.0;
+            let base = -SHELL_RIB_SWEEP * span * (1.0 - u);
+            septum = septum.max((rib_offset(u, span, 1.0, 0.0, 0.0) - base).abs());
+            inner = inner.max((rib_offset(u, span, SHELL_RIB_INNER, 0.0, 0.0) - base).abs());
+        }
+        assert!(
+            inner > septum * 1.2,
+            "inner ribs ({inner:.4}) should wave clearly more than septa ({septum:.4})"
+        );
+    }
+
+    /// INDEX dilates the umbilicus, inversely and monotonically: silent tree depths
+    /// mean an open centre.
+    #[test]
+    fn umbilicus_closes_as_index_rises() {
+        let max_r = 500.0_f32;
+        let eye = |index: f32| SHELL_MIN_PX + max_r * UMBILICUS_MAX * (1.0 - index);
+        assert!(eye(0.0) > eye(1.0), "index 0 must open the centre widest");
+        assert!(
+            (eye(1.0) - SHELL_MIN_PX).abs() < 1e-4,
+            "at full index the centre should close to the stroke limit"
+        );
+        assert!(
+            eye(0.0) < max_r * 0.5,
+            "an open umbilicus must not swallow the shell"
+        );
+        let mut prev = f32::MAX;
+        for i in 0..=20 {
+            let e = eye(i as f32 / 20.0);
+            assert!(e < prev);
+            prev = e;
+        }
+    }
+
+    /// 1-bit art reduces by whole-number ratios only, and never exceeds its box.
+    /// A fractional ratio splits the source's own pixel blocks and the dither then
+    /// breaks them up.
+    #[test]
+    fn art_reduction_uses_whole_number_ratios() {
+        // Billy's Earth: 1000 px of ~10 px blocks into a 201 px cap -> divisor 5.
+        assert_eq!(art_box(Vec2::splat(1000.0), Vec2::splat(201.0)), Vec2::splat(200.0));
+
+        for natural in [16.0_f32, 64.0, 333.0, 1000.0] {
+            for cap in [7.0_f32, 33.0, 100.0, 512.0, 4000.0] {
+                let box_ = art_box(Vec2::splat(natural), Vec2::splat(cap));
+                assert!(
+                    box_.x <= cap + 1e-3,
+                    "{natural} into {cap} gave {} — over the cap",
+                    box_.x
+                );
+                let ratio = if box_.x >= natural {
+                    box_.x / natural
+                } else {
+                    natural / box_.x
+                };
+                assert!(
+                    (ratio - ratio.round()).abs() < 1e-4,
+                    "{natural} into {cap} gave ratio {ratio}, not a whole number"
+                );
+            }
+        }
+    }
+
+    /// Aspect is preserved for non-square art, so a portrait is not stretched to
+    /// fill its plinth.
+    #[test]
+    fn art_reduction_preserves_aspect() {
+        let box_ = art_box(Vec2::new(300.0, 600.0), Vec2::new(200.0, 200.0));
+        assert!((box_.y / box_.x - 2.0).abs() < 1e-4, "aspect drifted: {box_:?}");
+        assert!(box_.x <= 200.0 + 1e-3 && box_.y <= 200.0 + 1e-3);
+    }
 }

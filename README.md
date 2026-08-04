@@ -356,17 +356,336 @@ cargo run --release -p fibonacci-gui
 
 Strict 1-bit (white on black, hard rectangles, monospace), with dithering
 standing in for brightness everywhere — an operator's live output level is
-rendered as stipple density. Panels:
+rendered as stipple density.
 
-- **The Logalith** (centerpiece): a logarithmic spiral whose vertices are
-  displaced by the live stereo side signal (L−R) and whose segments crack
-  out as rip + haunt rise. Coherent phase leaves the shell serene; phase
-  violence visibly breaks it. Its growth rate is the chambered nautilus's
-  ≈3× per whorl — deliberately *not* φ per quarter-turn: the "nautilus is
-  a golden spiral" claim is a myth (the real animal grows ≈3×/whorl, φ
-  gives ≈6.85×), and this instrument doesn't ship myths. The φ lives in
-  the septa: one chamber wall per operator at golden-angle stations,
-  pulsing with that operator's live level.
+**The centerpiece is quartered**, each cell in its own hard frame, and both
+cuts are golden: the top row takes the major section of the height (`1/φ`) and
+the bottom row the minor (`1/φ²`), while the left column takes the *minor*
+section of the width — floored at 320 px, because a golden proportion that
+clips a slider is just a clipped slider. Top row: the performance controls,
+and the Logalith. Bottom row: the portrait plinth, and the voice.
+
+Panels:
+
+- **The Logalith** (top right): a five-whorled shell whose chambers are engraved
+  by their operators' live levels and whose whorls crack out as
+  rip + haunt rise. Coherent phase leaves the shell serene; phase
+  violence visibly breaks it.
+
+  It **doubles per whorl over five whorls**. 5 and 2 are both Fibonacci,
+  doubling is the simplest self-similar growth there is, and five whorls is what
+  leaves room for the five Fibonacci chamber counts below. It is deliberately
+  *not* φ per quarter-turn: the "nautilus is a golden spiral" claim is a myth
+  (the real animal grows ≈3×/whorl, φ gives ≈6.85×), and this instrument doesn't
+  ship myths. It is not claiming to be a nautilus either — that ≈3× only ever
+  resolved three whorls, too few to say anything with. The φ lives in the rock's
+  periods, the operator ratios, and everywhere else in the instrument; the
+  Fibonacci lives in the chamber counts.
+
+  It is **drawn, not filled** — the anatomy of the flat many-whorled shell
+  Billy referenced, in strokes:
+
+  - **The suture**: one continuous spiral, the seam the shell coils against
+    itself along. Its successive turns *are* the whorl boundaries, so one path
+    gives every ring. The outermost turn is drawn at 2 px because that edge is
+    the silhouette and has to read as one.
+  - **Septa** crossing each whorl, and this is where the shell says what it is —
+    **the count per whorl comes from the ratio mode**, drawn from the integer
+    sequence whose ratio limit *is* that mode's own constant:
+
+    | mode | chambers, outermost first | sequence |
+    |------|---------------------------|----------|
+    | harmonic | 30, 24, 18, 12, 6 | the harmonic series, 6 × (5,4,3,2,1) |
+    | fibonacci | 34, 21, 13, 8, 5 | F(9)…F(5) |
+    | golden | 29, 18, 11, 7, 4 | Lucas numbers — `L(n)/L(n−1) → φ` too |
+    | mirror | 4, 7, 11, 18, 29 | those Lucas numbers reversed |
+    | plastic | 28, 21, 16, 12, 9 | Padovan, `P(n) = P(n−2) + P(n−3)`, → ρ |
+
+    Golden mode uses Lucas rather than Fibonacci because both converge on φ: the
+    shell is visibly a *different* creature in golden mode while meaning the same
+    limit. Mirror reverses them, so the dense divisions sit at the centre — a mode
+    that mirrors its exponents around the fundamental, mirrored. Plastic uses the
+    very sequence its own operator ratios come from. No two whorls in a mode share
+    a count, so none share an angular division and the per-operator assignment
+    cannot line up into radial stripes — chambers are numbered by one running
+    counter across the whole shell, so a stripe would need two whorls sharing both
+    a count *and* a starting operator.
+  - **Growth ribs** between the septa: their *count* (1–4) and their *reach*
+    across the whorl (30–75 %) both carry one operator's live level. Engraving
+    darkens by adding lines, so level is line count. Ribs stopping short of the
+    inner suture is both what the reference does and the depth cue — the whorl
+    is lit at the seam it hangs from and falls away behind.
+  - Ribs are **wavy curves, not spokes**: they lean back toward the centre and
+    S-bend on the way, both ends anchored. A growth line runs perpendicular to
+    the shell's direction of growth, which at this pitch is close to radial but
+    not radial; straight spokes read as a bicycle wheel.
+
+    Lean and wave are fractions of the **chamber's own angular width** (0.55 and
+    0.22), not absolute angles. A chamber on the outer whorl spans 0.185 rad and
+    one on the innermost spans 1.26, so a fixed angle leaned the outside hard and
+    the inside not at all. Measured against the chamber, the shape is identical
+    on every whorl.
+
+    The growth ribs inside a chamber get **twice the wave** — they are free edges
+    where the septa are structural. The *lean* stays uniform on purpose: ribs all
+    leaning the same way stay parallel and can never cross, and it is only a
+    difference in shape between neighbours that tangles them. Doubling the lean
+    as well put the inner ribs 130 % of a chamber width from their septum, i.e.
+    straight through the next chamber. Doubling the wave alone leaves 20 px of
+    divergence against 23 px of rib spacing at full density: they crowd their
+    septa without crossing, and that holds on all five whorls.
+  - **The suture undulates** too — ±3.5 % of the local radius, 13 cycles a whorl
+    (Fibonacci). The reference shell's whorl edges are not smooth curves, and a
+    few percent of wobble is the difference between a spiral and a grown thing.
+    Adjacent whorls sit a whole radius apart at this growth rate (248 px against
+    a ±17 px wobble), so it cannot make them collide. It lives in
+    `shell_unit_r`, so the fit, the silhouette bounds and the ribs' endpoints all
+    agree about where the suture actually is.
+  - **The aperture** — the mouth — is the terminal rib, at 2 px.
+
+  **It ripples.** A travelling wave runs round the shell and every rib undulates
+  as it passes, windowed by `sin(uπ)` so both ends stay pinned to their sutures
+  however hard the middle swings — ±60 % of a chamber's width on a 7 s cycle. The
+  amplitude can be that large precisely *because* the wave travels: its
+  wavelength is long, so neighbouring ribs stay nearly in step and move together
+  instead of diverging into each other. The phase gradient scales with radius, so
+  the wavelength is constant in pixels rather than in angle — what a wave in a
+  medium actually does, and what keeps the tight inner whorls in step. Held in
+  angle, the innermost whorl's ribs (0.31 rad apart in fibonacci mode) diverged
+  14 px against 10 px of spacing and crossed. The suture undulates on the same
+  clock.
+
+  **Five engine parameters reach the shell**, each drawn as the mechanic it
+  actually is rather than as a mood assigned to a number:
+
+  | control | what it does to the shell | why that |
+  |---------|---------------------------|----------|
+  | `master` | the shell's **scale**, 0.55 → 1.45 of its fitted radius, through a 1.8 s one-pole — and so its sway, its rock and its spin | the creature draws itself up as the instrument gets loud |
+  | `INDEX` | the **umbilicus**: the open centre, widest at index 0 and closing to nothing at 1 | index 0 is pure sine carriers, so the tree's depths are silent — and raising it blooms the tree downward, the deepest operators last, which are the innermost whorls |
+  | operator level | chambers gain ribs (1–4) reaching further in (30–75 %) | engraving darkens by adding lines |
+  | `rip` | the ripple's **speed**, 7 s per cycle down to 2.3 s | rip is the drone folded onto its own past: a wobble |
+  | `damp` | waves smooth out — suture undulations 21 → 5 a whorl, rib wavelengths 3.0 → 0.8 | damping *is* the removal of high frequencies, here in space |
+  | `fb` | every rib is redrawn beside itself, up to 2 dashed echoes | feedback *is* a signal re-injecting its own past |
+  | `haunt` | up to 5 ghost sutures, each turned a further π/5, thinning by 0.92 per pass | the Ghost Line rotates its echo π/5 per pass and inverts after five |
+
+  `master`'s scale is smoothed hard on purpose: 1.8 s means a full slider sweep
+  takes ≈5 s to settle (272 → 718 px at a 1216×840 panel), so the size reads as a
+  slow swell rather than as a readout of the control. Silence leaves the shell at
+  55 % — it shrinks back, it does not vanish. The smoothing runs against real
+  elapsed time, so the swell is the same speed whatever the frame rate is doing,
+  and the pole is re-derived from the scaled radius rather than simply moved: its
+  offset from the silhouette's centre is itself proportional to the radius, so
+  scaling the radius alone would shrink the shell toward its own pole and slide it
+  off-centre.
+
+  The ceiling goes **past** the fitted radius on purpose, so a loud instrument
+  pushes the shell off the edges of the panel and is cropped by them. Containment
+  was never the fit's job: the panel's clip is what guarantees nothing draws
+  outside the frame, so being cut off is free. **Above scale 1.0 the rock's
+  containment arithmetic no longer holds** — its headroom is budgeted against the
+  fitted radius — and the clip alone holds the line. That is the intended trade.
+  At the stock `master` of 0.8 the shell sits at scale 1.27, filling the panel with
+  7 % of its height cropped; at full master, 19 %. It also means every whorl gets
+  bigger, so the innermost resolves at 45 px instead of 31 — a louder instrument is
+  a more detailed creature. The visible sky shrinks correspondingly.
+
+  The ripple's **amplitude is a constant** — the shell is always writhing by the
+  same amount, and rip only decides how frantically. Tying amplitude to rip left
+  a slack Rip with a nearly still creature, which is the opposite of alive.
+
+  Ghosts are drawn as stipple because in strict 1-bit, sparseness is the only way
+  to be faint. **Nothing is destroyed to convey any of it** — the cracks that used
+  to break the shell apart at high rip/haunt are gone, because they were costing
+  the form more than they were saying.
+
+  **At critical dread the shell convulses.** Two things happen at once. It
+  *stutters* 2 px, on the same clock and in the same direction as the trembling
+  sliders that caused it, so the panel and its controls shake together — 2 px
+  rather than the sliders' 1 px, because 1 px on a 495 px shell does not register,
+  and it is budgeted into the fit's headroom rather than left to the clip so the
+  containment stays a proof. And it *seizes*: the ripple's phase is re-thrown
+  every frame across a full turn, so the wave stops travelling and the whole
+  pattern flickers between unrelated configurations. One offset for the shell
+  rather than one per rib, so the ribs keep their phase relationships and the
+  pattern stays a pattern instead of dissolving into noise.
+
+  Critical is below 12.5 % φ integrity — `max(rip, haunt) > 0.875` — with the same
+  hysteresis the voice pools use. The band switches discretely, but everything it
+  drives **ramps through a 0.9 s one-pole**: the trembling controls, the stutter and
+  the seizure all fade in and out, so crossing the threshold is an onset rather
+  than a switch being flipped. The controls round their offset to whole pixels, so
+  they stay crisp while the ramp resolves in steps.
+
+  The ripple's and the rock's phases are all **integrated** (`phase += dt × rate`),
+  not computed as `elapsed × rate`. The rock's three oscillators are integrated
+  *separately* rather than derived from one phase scaled by φ powers: wrapping a
+  shared phase at τ would leave the φ-multiplied ones discontinuous, because φ is
+  irrational and no common period exists. Multiplying accumulated time by a rate makes the phase jump
+  whenever the rate changes, by an amount proportional to how long the app has
+  been running: moving the Rip slider snapped the whole shell, and the snap grew
+  worse all session. That defect is in fact how the seizure was discovered —
+  dragging the Rip slider while it trembled juddered its value, and every tiny
+  rate change threw the phase a long way. The state was worth keeping, so it is
+  now produced deliberately, tied to the dread band rather than to an interaction
+  accident and independent of session length.
+
+  Two guards keep every mode legible. Sideways displacement scales with the
+  chamber it lives in, but is **capped at 0.35 rad** — mirror mode puts only 4
+  chambers on the outer whorl, where an uncapped ripple would swing a rib clean
+  across the shell. And growth ribs **thin out below 3 px of spacing** — mirror
+  mode's innermost whorl holds 29 chambers, where ribs would sit 1.7 px apart and
+  merge into a smudge, so those chambers show their septum alone.
+
+  **Strokes, because a raster has a floor and a stroke does not.** A raster cell
+  was 11 px at Billy's panel, so a whorl 14 px across could not be drawn at all
+  and the inner shell had to be faked as a solid core. That was the entire
+  obstacle to granularity ("running it as pixels is not the right idea"). With
+  1 px strokes all five whorls resolve — the innermost is 15–31 px — and all 81
+  chambers are drawn. It is also cheaper: ≈2,200 stroked segments at a 1216×840
+  panel against 8,360 per-cell tests, and ≈270,000 for the ribbon before that.
+  Vertices are snapped to whole pixels, since feathering is off and a fractional
+  vertex is a blurry vertex.
+
+  Two consequences of drawing a spiral in a rectangle, both measured rather
+  than guessed:
+
+  - **It is fitted and centred on its own silhouette, not its origin.** A
+    logarithmic spiral is fat at its terminal angle and thin a whorl back, so
+    its outline's centre sits `(+0.181, +0.229)` radii from the pole — about
+    (41, 52) px at a 607×410 panel. Drawn about the panel centre it lands in
+    a corner with dead space opposite. The unit outline is measured once, arm
+    included, then scaled to fill 97 % of the panel and translated so the
+    *outline* is centred. Fitted, the silhouette is 1.353 × 1.762 radii —
+    portrait-aspect — so a landscape panel keeps space beside it by
+    construction. That space is the sky, below.
+  - **Scale governs the rock**, so the shell reads as a mass adrift rather than a
+    picture being nudged. Its sway is a fraction of **its own radius**, not of the
+    panel — tied to the panel, a small shell swayed a large fraction of itself
+    (twitchy) while a large one swayed a small fraction (inert) — and the rock's
+    periods stretch with the scale, so a big shell moves further *and* slower:
+
+    | `master` | radius | sway | rock period | spin period |
+    |---|---|---|---|---|
+    | 0.0 | 310 px | ±10 px | 7.2 s | 207 s |
+    | 0.4 | 513 px | ±28 px | 11.8 s | 343 s |
+    | 0.8 (stock) | 717 px | ±55 px | 16.5 s | 479 s |
+    | 1.0 | 818 px | ±71 px | 18.9 s | 547 s |
+
+    Sway grows with the **square** of the scale, not with the scale. Billy's
+    reasoning is the correct one — a fixed real displacement subtends more of your
+    view as the object nears — but a strict perspective projection makes that
+    growth *linear* in apparent size, and linear was imperceptible: ±22 px on a
+    717 px shell is under 3 % of its own radius. Squaring is a deliberate
+    exaggeration of a real effect, which is the honest description of it.
+
+    The sway is deliberately **not** reserved for in the fit's headroom. Budgeting
+    it would shrink the shell to guarantee the drift stayed inside the frame,
+    which is the opposite of the intent: it is meant to range across the space and
+    be cropped at the edges. Only the tilt and the stutter are reserved for.
+
+    The tilt's amplitude stays a fixed *angle*: its effect in pixels is `r × tilt`
+    and already scales with the shell, so scaling the angle too would
+    double-count. The sky's motion field keeps its own clock and does *not* slow
+    with the shell — that difference is what reads as parallax, and it is why the
+    background stays the still thing and the shell the thing choosing to approach.
+  - **It spins**, continuously, one direction, 377 s (Fibonacci) per turn at
+    scale 1 and slower as it grows — 0.66 to 1.74 °/s. The oscillating tilt alone
+    was invisible, and the reason is the form: a spiral leaned 4° looks like the
+    same spiral, because it is close to rotationally symmetric. A turn that keeps
+    going does not, because the aperture travels round and gives the eye something
+    to track.
+  - **It rocks.** A diagonal sway at periods 13 s and 13/φ ≈ 8.03 s, and a tilt
+    that is *two* sines summed — 8.03 s and 13/φ² ≈ 4.97 s, weighted 1 : 0.34 —
+    all of them golden-related and therefore incommensurable, so the motion is
+    quasi-periodic and never repeats, the same argument that makes the drone's
+    own waveform never repeat. A single sine rocks like a metronome and a
+    creature does not; the sum is renormalised so the amplitude still cannot
+    exceed its bound. The tilt is offset by π/5, the instrument's own rotation
+    constant, so the turn leads the drift instead of tracking it. Amplitudes are
+    1.8 % of the panel's shorter axis and ≈4.3°, and radii are taken from the
+    *untilted* angle so the shell turns without deforming.
+
+    Rotation does the visible work: in a coarse raster a uniform translation
+    snaps the whole shell a whole cell at a time, while a rotation moves the
+    outer whorls further than the inner ones, so cells flip a few at a time
+    along the outer edge. At ≈1.5° that was one cell of edge travel and read as
+    flicker; at ≈4.3° it is ≈3 cells, plus 1.4 from the sway. Nothing audible
+    has an oscillator like this — the rock is presentational only.
+  - **It cannot leave its panel.** The shell turns about its own silhouette
+    centre, not the spiral's pole: the pole sits ≈0.29 radii off-centre, so
+    turning about it would swing the whole shape through an arc and cost far
+    more room than turning it in place. Rotating a box in place grows it by the
+    *other* axis's extent × sin(tilt), and since the fit is height-limited, the
+    horizontal share of that is free — so the two axes are budgeted separately
+    and the fit happens inside a panel shrunk anisotropically (46 × 39 px at
+    1216×840). Sway and tilt then provably never reach the frame, and the
+    amplitude costs only 9 % of the radius instead of the 20 % a symmetric
+    pole-rotation budget would have.
+
+    The live side signal's jitter is deliberately *not* budgeted for: it is
+    capped at 4 % past the fitted radius and clipped by the panel, because a
+    Room violent enough to shake the shell into its own frame should look like
+    it. The clip sits 3 px inside the cell, so the frame is never overdrawn
+    either way.
+  - **It stops where its own whorls stop resolving.** The black between
+    adjacent arms is `r · (1 − 1/3 − 2 × 0.11) ≈ 0.45 r`; once that falls
+    under 1.6 raster cells the arms fuse and the centre becomes a pulsating
+    blob. The spiral therefore ends at `r = 1.6 · cell / 0.45` — ≈8 % of the
+    outer radius, leaving ≈2.3 clean whorls around an open umbilicus, which
+    is what the animal actually has.
+- **The sky** (behind the Logalith): 170 stars at hash-derived positions —
+  deterministic, so it is the same sky every launch, with no RNG and no
+  allocation — mostly 1 px, some 2 px, and roughly one in thirty-two drawn as
+  a 4-point sparkle. The shell is drawn over them, so a star behind a solid
+  white arm is simply not there.
+
+  **The background has its own motion field**, on its own clock. Two motions
+  that do not share a clock read as a creature in a medium; one shared clock
+  reads as a single moving picture. Every term is a pure function of (star
+  index, time) — no state, no RNG, no allocation — and the periods are
+  Fibonacci seconds, pairwise coprime, so the field returns to its starting
+  configuration only after 21·34·55·89 = 3,495,030 s ≈ **40 days**. Composed in
+  this order, each term acting on the last (figures for a 1216×840 panel):
+
+  | | term | magnitude |
+  |---|---|---|
+  | 1 | **Drift**, wrapped in normalised space so the field is endless and seamless; bearing is the golden angle, so it slides along no axis | 5.5 px/s near layer, 1.9 px/s far |
+  | 2 | **Parallax wobble**, a per-layer Lissajous; depth comes from the star's own hash, and near stars are both bigger and faster — which is the whole of parallax | ±12.2 px near, ±4.3 px far, on 34 s × 21 s |
+  | 3 | **Curvature**, a barrel/pincushion coefficient breathing on an 89 s period: the field itself bulges and draws back in | ±1.7 px at ‖u‖ = 0.25, ±38.7 px at the corners — a mean 1.7 px/s |
+  | 4 | **Noise warp**, a smooth sum-of-products field in x, y and t, so the sky shears locally instead of only moving as a block | ±17 px, evolving on 9–14 s |
+  | 5 | **Lensing** around the shell: deflection ∝ 1/d, the real law, capped so the singularity at d → 0 cannot fling a star across the panel | 46 px at 0.5 R, 23 px at 1 R, 12 px at 2 R |
+  | 6 | **Edge shimmer** — the field is calm in the middle and restless at its boundary, which also hides the seam where a drifting star wraps | outer 24 % band, off ≤ 34 % of a 1.3–3.0 Hz blink |
+
+  The shimmer's edge factor is taken from the star's *wrapped* position, before
+  any displacement, so a star shimmers because of where it sits in the field
+  rather than because the warp happened to shove it outward. The lensing reads
+  as a gradient rather than a uniform expansion: across the visible panel the
+  push ranges from ≈13 px at the corners to ≈46 px near the shell.
+
+  This is the mythology, not decoration: the shell is a space entity that
+  emits resonant sound at targets, punishing humans for experiments that
+  locally subvert the physical law its own form is bound to — which is what
+  LOCAL φ INTEGRITY has been measuring all along. The stars are as literal as
+  that scene gets; a planet and a beam were built and cut (see DESIGN.md).
+- **The portrait plinth** (bottom left): a 1-bit portrait standing on a field
+  of horizontal scanlines (1 px rule every 3 px). The art is loaded from the
+  assets and hot-reloaded like the text — `portrait_critical.png`,
+  `portrait_low.png`, `portrait.png`, each falling back to the next, so the
+  face follows the dread bands exactly as the voice pools do. The art is
+  Billy's pen; while a slot is empty the plinth shows its bare striped field
+  and claims nothing.
+
+  **1-bit art is reduced, never sampled.** Alpha below half is left transparent
+  so the scanlines show through the art's own background. Art that fits its box
+  is magnified by a whole number with NEAREST filtering, so one source pixel is
+  an exact square of screen pixels. Art *larger* than its box gets one texture
+  rebuilt at exactly the drawn size: each target pixel area-averages its source
+  block, and that local grey is thresholded through the same 4×4 Bayer matrix
+  the rest of the UI shades with. Reduction ratios are whole numbers, rounded up
+  so the result always fits — art built of blocks keeps those blocks whole
+  instead of having them split across target pixels and dithered back.
+  Nearest-neighbour at a fractional ratio would take some blocks twice and drop
+  others: irregular mush. At 1:1 the reduction is the identity, losslessly.
 - **The tree**: the recursion structure, S/P glyphs per node, leaves
   stippled by live level. The blinking node is the one that flips to reach
   the neighbouring roster algorithm — clicking it moves along the
@@ -376,15 +695,39 @@ rendered as stipple density. Panels:
   when haunt > 0, dotted when dormant.
 - **LOCAL φ INTEGRITY**: a display composite, `100·(1−max(rip, haunt))` —
   the formula is printed next to the meter.
-- **Scopes**: mono waveform, plus an L/R Lissajous (mid/side rotated) —
-  the phase image itself.
+- **Scopes**: the mono waveform takes the full width of the footer; the L/R
+  Lissajous (mid/side rotated) — the phase image itself — sits under the
+  presets in the right panel, circular whatever its box's aspect.
 - **Event log**: timestamps + measurements only. Every line the program
   authors must be verifiable against the engine or against mathematics;
-  anything else is a bug.
-- **The voice** (`crates/fibonacci-gui/assets/voice.txt`): all *voiced*
-  text is data, not code — one text box per blank-line-separated paragraph,
-  `#`-paragraphs ignored, hot-reloaded every ~2 s while running. The file
-  ships empty; its author is Billy.
+  anything else is a bug. It rides a **marquee** in the header strip: the six
+  most recent measurements loop leftward at 40 px/s, advanced in whole pixels
+  only, because a sub-pixel scroll is a blurry scroll and the no-AA rule
+  forbids it. The loop's gap is 80 px, not a screenful — a screenful left the
+  band blank for ~23 s of every 58 s cycle.
+- **Marginalia** (under the controls): the models behind the sliders above —
+  the INDEX exponents, the golden level decay, the Rip's delay and rotation,
+  the feedback average, the carrier count, the glide — in the
+  annotated-notebook register. Every line is checkable against the
+  mathematical models above. Whatever height is left below it is a fixed
+  low-density dither field, which carries no measurement and must not be read
+  as one.
+- **The voice** (bottom right; `crates/fibonacci-gui/assets/voice.txt`): all
+  *voiced* text is data, not code — one text box per blank-line-separated
+  paragraph, `#`-paragraphs ignored, hot-reloaded every ~2 s while running.
+  The file ships empty; its author is Billy.
+
+  The box **types itself out** at 30 characters per second, humanised two
+  ways: each character's dwell is jittered ±40 % by a hash of its index, and
+  the reveal holds after punctuation — 9 extra character-times at a full
+  stop, 5 at a line break, 4 at a comma, colon or dash. The jitter comes from
+  a hash rather than a clock or an RNG, so a given box types with exactly the
+  same rhythm every time it comes round. A box of Billy's takes 9–11 s.
+
+  **Clicking always generates**: it advances to the next box and types it
+  from zero. There is deliberately no skip-to-end — a box types for ~10 s and
+  then holds for 45, so a skip meant the one thing the box exists to do was
+  the one thing you never saw.
 
 ### Roadmap
 
