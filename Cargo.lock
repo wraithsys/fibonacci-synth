@@ -1252,6 +1252,7 @@ dependencies = [
  "eframe",
  "fibonacci-dsp",
  "midir",
+ "png",
  "rtrb",
  "serde",
  "serde_json",

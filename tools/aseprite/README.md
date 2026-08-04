@@ -55,6 +55,76 @@ images that dither too dark or too pale.
 To install the script: `File > Scripts > Open Scripts Folder`, copy
 `bypo-portrait-grid.lua` in, then `File > Scripts > Rescan`.
 
+## Converting PNGs directly
+
+If you've already dithered somewhere else, skip Aseprite entirely:
+
+```bash
+cargo run -p fibonacci-gui --example png_to_grid -- [options] <in.png>...
+```
+
+| flag | what it does |
+|---|---|
+| `--out <name>` | portrait name; single input only |
+| `--dir <folder>` | take every `.png` in a folder |
+| `--dry-run` | report densities, write nothing |
+| `--alpha` | ink = the **opaque** pixels; brightness ignored entirely |
+| `--invert` | flip whichever test is in use |
+| `--threshold N` | luminance cut, 1–254, default 128 |
+| `--stats` | luminance/alpha histogram per file |
+| `--preview` | print the grid (single input only) |
+
+It's a dev-dependency tool, so the instrument itself still decodes no images.
+
+### Sorting a batch of variants
+
+Point it at a folder of exports and see the densities before committing to one:
+
+```bash
+cargo run -p fibonacci-gui --example png_to_grid -- --dir ~/Downloads/eng --dry-run
+```
+
+```text
+source                          portrait                size    ink  note
+engineer_1bit.txt (1) (13).png  engineer_1bit-5        64x80    28%
+engineer_1bit.txt (1) (14).png  engineer_1bit-6        64x80    23%  sparse — may read as noise
+engineer_1bit.txt (1) (6).png   engineer_1bit-14       64x80    69%  dense — stripes barely show
+```
+
+Names come from the filenames — extension stripped, then a trailing `.txt`, then
+Windows' ` (3)` duplicate markers — so `engineer_1bit.txt (1) (6).png` becomes
+`engineer_1bit`. When several inputs want the same name **they all get numbered**,
+rather than the first one claiming the plain name: which file sorts first is
+arbitrary, and letting it take the real name means the portrait gets chosen by
+alphabet. Pick from the table, then name the winner properly:
+
+```bash
+cargo run -p fibonacci-gui --example png_to_grid -- "eng/whichever.png" --out engineer_1bit
+```
+
+**Aim for 25–60% ink.** Below that it reads as scattered noise; above it, the
+figure goes to a slab and the scanlines stop showing through. Anything outside the
+band gets flagged in the table.
+
+### The gotcha: two kinds of source
+
+Most dithered exports carry their shape in **brightness** — the light pixels are
+the figure, and the default settings find them.
+
+But a **cut-out** carries its shape in **transparency**: every opaque pixel is the
+figure whatever colour it is, and thresholding brightness finds nothing at all.
+That's what `--alpha` is for. Dithermark's transparent exports are this kind — the
+first one through here came out at 1% ink on the default settings and 53% with
+`--alpha`.
+
+**Run `--stats` first if a grid comes out empty.** It tells you which case you're
+in immediately:
+
+- *mostly transparent, the rest near-black* → cut-out, use `--alpha`
+- *nothing above the threshold but not transparent either* → faint anti-aliased
+  lines, lower `--threshold`
+- *100% transparent* → the export failed; there's no image in the file at all
+
 ## Alternatives
 
 - **[Dithermark](https://app.dithermark.com/)** — free, browser, far more dither

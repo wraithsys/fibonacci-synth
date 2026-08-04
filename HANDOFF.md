@@ -49,11 +49,12 @@ fibonacci-gui`. It drones immediately by design.
    documented in README's "mathematical models" section. Undocumented
    magic numbers are bugs.
 2. **Program-authored text = verifiable measurements only.** All *voiced*
-   text is Billy's, in the data files (`crates/fibonacci-gui/assets/
-   voice.txt`, `integrity_low.txt`, `integrity_critical.txt`) — hot
-   reloaded, blank-line-separated boxes, `#` paragraphs ignored,
-   CRLF-safe. His register: mundane science + something extraordinary +
-   a human reacting. Never florid ("not an Alex Kurtzman Star Trek show").
+   text is Billy's, in `crates/fibonacci-gui/assets/relic_log.json` —
+   hot reloaded, characters own their entries, format documented in
+   `assets/RELIC_LOG.md`. His register: mundane science + something
+   extraordinary + a human reacting. Never florid ("not an Alex Kurtzman
+   Star Trek show"). Windows-authored content needs meeting halfway: strip
+   BOMs and CRLF, or the file silently parses as nothing.
 3. **Roster counts are Fibonacci**: algorithms 5 (→8→13), ratio modes 5,
    melodic tunings 5, scales 8, comb leaves in the future Room 8.
 4. **No envelopes, ever.** It drones. Off switches are true resets
@@ -71,37 +72,78 @@ fibonacci-gui`. It drones immediately by design.
 
 ## State right now
 
-- HEAD `4f89ce0`: centerpiece layout rework (controls in a left column,
-  Logalith full-height) — **awaiting Billy's verdict**.
-- Discouragement mechanics live: dread bands (Normal/Low <47.5%/Critical
-  <12.5%, hysteresis), pool cascade, log cadence 30 s/10 s, ±1 px tremble
-  on rip+haunt at critical. Pools are comment-only templates — **Billy
-  still has to write them**.
-- Two-machine flow: sessions build+push; Billy pulls. Watch for Zed/CRLF
-  phantom-dirtying `main.rs` on the laptop (stash it, don't fight it).
-  `[profile.dev] opt-level = 2` so a bare `cargo run` still sounds right.
-- Presets (`crates/fibonacci-gui/presets/`) and `state.json` are
-  gitignored user data. Billy's presets so far: drama, throaty, nasty
-  (on his machines).
+The centerpiece is **quartered**: X controls (with a fake `PARAMETERS`
+window title bar), Y the Logalith, Z **deliberately empty** ("clear the
+zone"), W the voice. Both cuts golden. 59 tests green.
+
+- **The Logalith** is a five-whorled Fibonacci shell drawn in strokes, not
+  pixels. Chamber counts per whorl come from the ratio mode's own integer
+  sequence (fibonacci → 34/21/13/8/5, golden → Lucas, plastic → Padovan),
+  so switching tuning makes it a different creature. Ripples on a
+  travelling wave; `rip` sets speed, `damp` smooths, `fb` echoes each rib,
+  `haunt` raises ghost sutures at π/5, `master` scales it. Convulses at
+  critical dread. All of it in README.
+- **The voice** is `relic_log.json`: 30 entries, 11 characters, ids
+  auto-assigned as Fibonacci numbers. Witnesses speak while integrity
+  holds; the entity intrudes on **agitation** (a leaky integral of
+  max(rip,haunt) — the forgiveness rule made mechanical) plus a standing
+  8% decay chance. Intrusions render in inverted type at console speed
+  (90 cps, dead even); humans type at 30 cps with jitter and punctuation
+  holds. The old `voice.txt`/`integrity_*.txt` pools are retired.
+- **Space Z is empty pending a rethink.** The portrait pipeline — dithered
+  1-bit text grids drawn as animated point clouds, ordered by ink density
+  and ping-ponged — is in history at `52c5a99`; the grid parser, frame
+  loader, batch converter (`examples/png_to_grid.rs`) and Billy's 14 grids
+  all survive. The zone is **574×412, aspect 1.39**, and the app logs its
+  own figure on startup and resize. Briefs: `assets/portraits/README.md`
+  and `IMAGE_BRIEF.md`.
+- `[profile.dev] opt-level = 2` so a bare `cargo run` still sounds right.
+  Presets and `state.json` are gitignored user data.
 
 ## Open queue
 
-Billy's items: voice pools + any voice.txt rewrites (his pen only);
-layout verdict; 1-bit icon/sigil (heavy mercury-glyph register, drawable
-at 16×16); **Xilla font license confirmation — blocks any public
-release** (licensed alternates sit in `C:\Users\...\projects\fonts`);
-starter-preset-bank decision; roster-to-8 decision.
+**Billy's items**: the eleven portrait images (brief written, he is on it);
+Space Z's rethink; **the font conflict — blocks any public release**;
+1-bit icon/sigil; starter-preset bank; roster-to-8.
 
-Engineering next (in rough order):
-1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
-   8 comb leaves (series/parallel per node, 32-topology space, curated
-   roster), ghost cross-feed becomes rotation-3 octagram, Haas pre-delays
-   from Fibonacci milliseconds (1..34 = the Haas window), zero new
-   controls. Do NOT land it without Billy's ears on standby.
-2. Release engineering: public README with demo WAVs (regenerate via
-   `cargo run --release --example render`), v1.0.0 tag, zipped portable
-   Windows build, license, distribution decision (GitHub vs itch.io —
-   undecided, Billy's call).
+**Fonts, the live blocker.** Xilla has no license and is in git history
+since `0419ee7`, so a swap at tag time will not clear it. Billy pointed at
+dafont's bitmap listing filtered to Public domain / GPL / OFL
+(`bitmap.php?fpp=200&af=on&l[]=10`) — all 147 results are safe to ship.
+Shortlist agreed but **not yet downloaded**: `Pixel Operator` for UI,
+`Unifont Ex Mono` as fallback *and* the entity's voice (it is the only one
+certain to carry φ Δ π • ◦ ¤ and the subscripts), then nine archetype
+faces — Modern DOS, PixAntiqua, European Teletext, Pixeloid Sans/Mono,
+Enter Command, VHS/VCR OSD, Scriptorium, Minitel, Cyborg Sister. **The
+gate: no font enters `assets/` without its license file beside it** —
+precisely the check Xilla failed. Multi-font plumbing is not built yet.
+
+**Engineering next**:
+1. Fonts (above) — architecture plus the archetype/role mapping.
+2. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
+   8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
+   pre-delays from Fibonacci milliseconds, zero new controls. Do NOT land
+   it without Billy's ears on standby.
+3. Release engineering: public README with demo WAVs (`cargo run --release
+   --example render`), v1.0.0 tag, portable Windows build, license,
+   distribution decision (Billy's call).
+
+## Traps this session actually hit
+
+- **Never restructure source with PowerShell string surgery.** `Get-Content
+  -Raw` without `-Encoding UTF8` reads UTF-8 as ANSI and turns every φ, π
+  and — into mojibake across the whole file. Use the Edit tool. (Recovered
+  losslessly by re-encoding through CP1252, but don't repeat it.)
+- **A panel drawn in "whatever height is left" will silently vanish.** The
+  phase scope stopped drawing when app-wide padding was added. Reserve
+  space; don't scavenge it.
+- **Phases must be integrated, not `elapsed × rate`.** Multiplying
+  accumulated time by a rate makes the phase jump whenever the rate
+  changes, by an amount proportional to session length. Billy found this
+  by dragging a trembling slider.
+- **Test the mechanic, not the number.** A threshold-with-discharge design
+  for agitation was killed by a test proving the discharge could never gate
+  anything at box cadence.
 
 ## Tone
 

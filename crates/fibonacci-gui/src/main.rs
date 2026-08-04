@@ -1,4 +1,4 @@
-//! BLOW YOUR PHASE OFF — the 1-bit front end.
+﻿//! BLOW YOUR PHASE OFF — the 1-bit front end.
 //!
 //! Visual language: strict two colors (white on black), hard rectangles,
 //! monospace type, and *dithering instead of brightness* — an operator
@@ -294,8 +294,6 @@ const ROCK_TILT: f32 = 0.075;
 const ROCK_TILT_2: f32 = 0.34;
 
 // ── The portrait plinth (Space Z) ──────────────────────────────────────────
-/// Scanline pitch behind the portrait, in pixels: a 1 px rule every 3 px.
-const SCANLINE_PITCH: f32 = 3.0;
 
 // ── The Logalith's sky ─────────────────────────────────────────────────────
 // Billy's mythology (2026-08-04): the shell is a space entity that emits
@@ -357,6 +355,14 @@ const TYPE_CPS: f32 = 30.0;
 /// character's index, never from a clock or an RNG — so a given box types
 /// with the same rhythm every time it comes round.
 const TYPE_JITTER: f32 = 0.4;
+/// **Console speed**, for the entity: it does not type, it prints. Three times
+/// faster, and perfectly even — no jitter, no holds at punctuation (Billy: "two
+/// different type speeds — transcript speed... and console speed").
+///
+/// The *cadence* is a second channel saying "this is not a person", working
+/// alongside the inverted type. A human hesitates at a full stop; a device does
+/// not, and the absence of hesitation is what you notice.
+const CONSOLE_CPS: f32 = 90.0;
 
 // ── The header marquee ─────────────────────────────────────────────────────
 /// Marquee scroll rate, pixels per second, advanced in whole pixels only.
@@ -686,6 +692,22 @@ fn one_bit_style(ctx: &egui::Context) {
     style
         .text_styles
         .insert(egui::TextStyle::Heading, FontId::monospace(15.0));
+
+    // Breathing room, app-wide (Billy: "give the parameter controls some padding
+    // (may be worth looking at this app wide)"). Set here rather than per-panel so
+    // every control gets it, and every value is a whole number of pixels — with
+    // feathering off, a half-pixel of spacing is a half-pixel of blur on whatever
+    // lands next to it.
+    //
+    // Panels stay packed edge to edge; this is only the space *inside* them, which
+    // is what was missing. Hard rectangles with cramped contents read as a bug
+    // rather than as density.
+    style.spacing.item_spacing = Vec2::new(7.0, 6.0);
+    style.spacing.button_padding = Vec2::new(6.0, 3.0);
+    style.spacing.interact_size.y = 22.0;
+    style.spacing.slider_rail_height = 6.0;
+    style.spacing.window_margin = egui::Margin::same(6.0);
+
     // The OS theme must never touch this instrument: pin the theme and
     // install the 1-bit style on BOTH theme slots, so a system light mode
     // can't swap in stock visuals (which rendered everything hardcoded
@@ -815,63 +837,62 @@ struct ShellPose {
 // be moved in whole pixels as a block, whereas every point in a cloud can move
 // independently. The same lesson as the shell — strokes and points animate,
 // rasters don't.
-/// Side of the portrait's square, as a fraction of the plinth's shorter axis.
-const SIGIL_FRAC: f32 = 0.78;
-/// A source grid wider or taller than this is rejected: the cloud is redrawn
-/// every frame, so its point count is a per-frame cost. 64×80 lands around 2,000
-/// points, which is the same order as the shell's stroke count.
+/// A source grid wider or taller than this is rejected: any renderer for these has
+/// to touch every point every frame, so grid size is a per-frame cost.
 const PORTRAIT_MAX_W: usize = 96;
 const PORTRAIT_MAX_H: usize = 120;
-/// Per-point breathing: amplitude in pixels, and the period range in seconds.
-/// Every point carries its own phase from a hash of its position, so the cloud
-/// shimmers like a printout being read rather than sliding as a sheet.
-const PORTRAIT_BREATH_PX: f32 = 0.9;
-const PORTRAIT_BREATH_S: f32 = 3.1;
-/// How far points scatter outward at full agitation. The record is disturbed by
-/// the thing it is a record of.
-const PORTRAIT_SCATTER_PX: f32 = 4.0;
-/// A scan band crosses the portrait on this period, displacing the points it
-/// passes over by a pixel — the plinth is a screen, and something is reading it.
-const PORTRAIT_SCAN_S: f32 = 7.0;
-const PORTRAIT_SCAN_FRAC: f32 = 0.16;
+/// How many numbered frames to look for beside the base name.
+const PORTRAIT_MAX_FRAMES: usize = 64;
 
-/// A pixel-snapped stroke. Feathering is off, so a fractional endpoint is a
-/// blurry endpoint.
-fn sig_line(p: &egui::Painter, a: Pos2, b: Pos2, w: f32) {
-    p.line_segment(
-        [
-            Pos2::new(a.x.round(), a.y.round()),
-            Pos2::new(b.x.round(), b.y.round()),
-        ],
-        Stroke::new(w, WHITE),
-    );
-}
-
-/// A polyline arc from `a0` to `a1` radians. Segment count follows arc length, so
-/// a big ring is not a polygon and a small one is not a heap of slivers.
-fn sig_arc(p: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, w: f32) {
-    let n = (((a1 - a0).abs() * r / 3.0).ceil() as usize).clamp(3, 400);
-    let pts: Vec<Pos2> = (0..=n)
-        .map(|k| {
-            let a = a0 + (a1 - a0) * k as f32 / n as f32;
-            Pos2::new((c.x + a.cos() * r).round(), (c.y + a.sin() * r).round())
-        })
-        .collect();
-    p.add(egui::Shape::line(pts, Stroke::new(w, WHITE)));
-}
-
-fn sig_ring(p: &egui::Painter, c: Pos2, r: f32, w: f32) {
-    sig_arc(p, c, r, 0.0, std::f32::consts::TAU, w);
-}
-
-/// A portrait: the inked cells of a dithered 1-bit grid, kept as points because
-/// points are what can be animated individually.
-struct Portrait {
-    path: String,
-    stamp: Option<SystemTime>,
+/// One dither of a portrait: the inked cells of a 1-bit grid, kept as points
+/// because points are what can be animated individually.
+struct PortraitFrame {
     w: usize,
     h: usize,
     pts: Vec<(u8, u8)>,
+}
+
+impl PortraitFrame {
+    fn ink(&self) -> f32 {
+        self.pts.len() as f32 / (self.w * self.h).max(1) as f32
+    }
+}
+
+/// A portrait is a **set of dithers of the same image**, cycled (Billy: "try
+/// putting them in some kind of order switching between them to draw at 0.5").
+///
+/// Frames are `<name>.txt` and `<name>-1.txt`, `<name>-2.txt` … in the portraits
+/// folder — exactly what the batch converter emits. They are **ordered here by ink
+/// density, not by filename**, so the sequence is a tonal ramp whatever order the
+/// files happened to be written in, and played up and back down so it never jumps
+/// from the densest dither to the sparsest.
+struct Portrait {
+    /// The base name, for detecting a change of speaker.
+    key: String,
+    /// Newest mtime across the frames, for hot-reload.
+    stamp: Option<SystemTime>,
+    frames: Vec<PortraitFrame>,
+}
+
+impl Portrait {
+    /// Which frame a ping-ponged cycle is showing at time `t`, given `secs` per
+    /// frame — up through the set and back down without repeating either end, so
+    /// there is no seam and no double-length hold at the turning points.
+    ///
+    /// Kept while cell Z is empty: the frame *sets* and their ordering are the part
+    /// of the portrait work most likely to survive a rethink, and this is the only
+    /// piece of it with arithmetic worth not re-deriving.
+    #[allow(dead_code)]
+    fn frame_at(&self, t: f32, secs: f32) -> &PortraitFrame {
+        let n = self.frames.len();
+        if n <= 1 {
+            return &self.frames[0];
+        }
+        let span = 2 * n - 2;
+        let step = ((t / secs).floor() as i64).rem_euclid(span as i64) as usize;
+        let i = if step < n { step } else { span - step };
+        &self.frames[i]
+    }
 }
 
 /// Parse a dithered 1-bit grid.
@@ -1372,6 +1393,8 @@ struct App {
     spin: f32,
     /// The shell's smoothed scale, chasing `master`.
     shell_scale: f32,
+    /// Last reported size of cell Z's interior, so a resize reports once.
+    portrait_area: (i32, i32),
     /// How far into the critical band we are, 0..1, smoothed. Everything the band
     /// drives is scaled by this, so it ramps instead of snapping.
     dread_level: f32,
@@ -1440,6 +1463,7 @@ impl App {
             // Start settled, so a restored session opens at its own size rather
             // than swelling in from small.
             shell_scale: scale_for(shadow.master_level),
+            portrait_area: (0, 0),
             dread_level: 0.0,
             index_smooth: shadow.index,
             portrait: None,
@@ -1936,127 +1960,6 @@ impl App {
         );
     }
 
-    /// Space Z: the portrait plinth. Horizontal scanlines fill the field
-    /// (reference: the striped pixel-art portraits in Billy's image 5), and the
-    /// portrait's point cloud stands on them — or the mark, if this archetype has
-    /// no portrait yet.
-    ///
-    /// The scanlines are laid on whole pixels and the *field* is what the cloud
-    /// sits against, so a dithered figure with an empty background reads as
-    /// standing on stripes exactly as in the reference.
-    fn draw_portrait(&self, painter: &egui::Painter, rect: Rect) {
-        let mut y = rect.min.y.ceil();
-        while y < rect.max.y {
-            painter.rect_filled(
-                Rect::from_min_size(Pos2::new(rect.min.x, y), Vec2::new(rect.width(), 1.0)),
-                Rounding::ZERO,
-                WHITE,
-            );
-            y += SCANLINE_PITCH;
-        }
-        if !self.draw_portrait_cloud(painter, rect) {
-            self.draw_portrait_mark(painter, rect);
-        }
-    }
-
-    /// Draw the portrait as an animated point cloud. Returns false if there is no
-    /// portrait, so the caller can fall back to the mark.
-    ///
-    /// Three motions, all from state we already have and all in whole pixels:
-    /// each point **breathes** on its own hashed phase, so the cloud shimmers like
-    /// a printout being read rather than sliding as one sheet; a **scan band**
-    /// crosses it, nudging the points it passes; and the cloud **scatters outward
-    /// with agitation**, so the record is disturbed by the thing it is a record of.
-    fn draw_portrait_cloud(&self, painter: &egui::Painter, rect: Rect) -> bool {
-        let Some(p) = &self.portrait else {
-            return false;
-        };
-        let side = rect.width().min(rect.height()) * SIGIL_FRAC;
-        let cell = (side / p.w.max(p.h) as f32).floor().max(1.0);
-        let (gw, gh) = (p.w as f32 * cell, p.h as f32 * cell);
-        let origin = Pos2::new(
-            (rect.center().x - gw * 0.5).round(),
-            (rect.center().y - gh * 0.5).round(),
-        );
-        let mid = Vec2::new(gw * 0.5, gh * 0.5);
-        let t = self.last_frame_time as f32;
-        let scatter = PORTRAIT_SCATTER_PX * self.agitation;
-        // Scan band, in grid rows.
-        let band = (t / PORTRAIT_SCAN_S).fract() * p.h as f32;
-        let band_w = (p.h as f32 * PORTRAIT_SCAN_FRAC).max(1.0);
-        let size = Vec2::splat(cell);
-
-        for &(gx, gy) in &p.pts {
-            let (fx, fy) = (gx as f32, gy as f32);
-            let h = (gx as u32)
-                .wrapping_mul(73_856_093)
-                .wrapping_add((gy as u32).wrapping_mul(19_349_663));
-            let phase = (h & 1023) as f32 / 1023.0 * std::f32::consts::TAU;
-            let mut off = Vec2::new(
-                (t / PORTRAIT_BREATH_S * std::f32::consts::TAU + phase).sin(),
-                (t / PORTRAIT_BREATH_S * std::f32::consts::TAU + phase * 1.7).cos(),
-            ) * PORTRAIT_BREATH_PX;
-            if scatter > 0.01 {
-                let from_mid = Vec2::new(fx * cell - mid.x, fy * cell - mid.y);
-                let d = from_mid.length().max(1.0);
-                let weight = ((h >> 11) & 255) as f32 / 255.0;
-                off += from_mid / d * scatter * weight;
-            }
-            if (fy - band).abs() < band_w {
-                off.x += 1.0;
-            }
-            painter.rect_filled(
-                Rect::from_min_size(
-                    Pos2::new(
-                        (origin.x + fx * cell + off.x).round(),
-                        (origin.y + fy * cell + off.y).round(),
-                    ),
-                    size,
-                ),
-                Rounding::ZERO,
-                WHITE,
-            );
-        }
-        true
-    }
-
-    /// The mark shown when an archetype has no portrait yet: the Logalith's own
-    /// shell in a ring, turning on the same clock as the real one. The instrument
-    /// saying "this record carries no image" in its own vocabulary, rather than an
-    /// empty box.
-    fn draw_portrait_mark(&self, painter: &egui::Painter, rect: Rect) {
-        let side = rect.width().min(rect.height()) * SIGIL_FRAC * 0.6;
-        let c = rect.center();
-        let tau = std::f32::consts::TAU;
-        sig_ring(painter, c, side * 0.5, 2.0);
-        let theta_max = SHELL_TURNS * tau;
-        let r_max = side * 0.34;
-        let mut pts: Vec<Pos2> = Vec::new();
-        let mut th = tau; // skip the innermost turns: they close to nothing here
-        while th <= theta_max {
-            let r = r_max * shell_unit_r(th, 0.0, 0.0);
-            let a = th + self.spin;
-            pts.push(Pos2::new(
-                (c.x + a.cos() * r).round(),
-                (c.y + a.sin() * r).round(),
-            ));
-            th += (3.0 / r.max(1.0)).clamp(0.02, 0.4);
-        }
-        if pts.len() > 1 {
-            painter.add(egui::Shape::line(pts, Stroke::new(1.0_f32, WHITE)));
-        }
-        // Four ticks on the ring, at the quarters.
-        for k in 0..4 {
-            let a = k as f32 * tau / 4.0 + self.spin * 0.5;
-            let (i, o) = (side * 0.5 - 4.0, side * 0.5 + 4.0);
-            sig_line(
-                painter,
-                Pos2::new(c.x + a.cos() * i, c.y + a.sin() * i),
-                Pos2::new(c.x + a.cos() * o, c.y + a.sin() * o),
-                1.0,
-            );
-        }
-    }
 
     /// Re-resolve the portrait: the current relic's avatar, with its extension
     /// swapped for `.txt`, looked up under `assets/portraits/`. Reloads when the
@@ -2071,25 +1974,49 @@ impl App {
             self.portrait = None;
             return;
         }
-        let Some(name) = portrait_asset_name(&avatar) else {
+        let Some(base) = portrait_asset_name(&avatar) else {
             self.portrait = None;
             return;
         };
-        let Some(path) = asset_path(&name) else {
+        let stem = base.trim_end_matches(".txt").to_string();
+
+        // Collect the frame set: the plain name, then every `-N` beside it. A gap in
+        // the numbering just means one fewer frame.
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(p) = asset_path(&base) {
+            paths.push(p);
+        }
+        for n in 1..=PORTRAIT_MAX_FRAMES {
+            if let Some(p) = asset_path(&format!("{stem}-{n}.txt")) {
+                paths.push(p);
+            }
+        }
+        if paths.is_empty() {
             self.portrait = None;
             return;
-        };
-        let stamp = file_stamp(&path);
-        let key = path.to_string_lossy().into_owned();
-        if let Some(p) = &self.portrait {
-            if p.path == key && p.stamp == stamp {
+        }
+        let stamp = paths.iter().filter_map(|p| file_stamp(p)).max();
+        if let Some(cur) = &self.portrait {
+            if cur.key == stem && cur.stamp == stamp && cur.frames.len() == paths.len() {
                 return;
             }
         }
-        self.portrait = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| parse_portrait_grid(&t))
-            .map(|(w, h, pts)| Portrait { path: key, stamp, w, h, pts });
+
+        let mut frames: Vec<PortraitFrame> = paths
+            .iter()
+            .filter_map(|p| std::fs::read_to_string(p).ok())
+            .filter_map(|t| parse_portrait_grid(&t))
+            .map(|(w, h, pts)| PortraitFrame { w, h, pts })
+            .collect();
+        // Order by density, so the cycle is a tonal ramp however the files were
+        // named. `total_cmp` because these are floats and a NaN would otherwise be
+        // an invalid ordering.
+        frames.sort_by(|a, b| a.ink().total_cmp(&b.ink()));
+        self.portrait = (!frames.is_empty()).then_some(Portrait {
+            key: stem,
+            stamp,
+            frames,
+        });
     }
 
     /// The sky the Logalith hangs in, and its motion field. Drawn first, so the
@@ -2460,6 +2387,84 @@ impl App {
         });
     }
 
+    /// A title bar with the three window buttons at its right end, so the parameter
+    /// cell reads as a utility window inside the instrument — the lab-software idiom
+    /// the whole panel language comes from.
+    ///
+    /// **Deliberately non-functional** (Billy: "minimise - fullscreen - close (not
+    /// functional)"). They are set dressing, and they are drawn rather than typed:
+    /// a bar, an outline and a cross are three shapes, and drawing them means they
+    /// cannot fall back to a different font's idea of `—`, `□` and `✕` — which on a
+    /// display face is usually a tofu box.
+    fn window_chrome(ui: &mut egui::Ui, title: &str) {
+        egui::Frame::none()
+            .fill(WHITE)
+            .inner_margin(egui::Margin::symmetric(4.0, 3.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(title).color(BLACK).monospace());
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Close, maximise, minimise — right to left, as they sit.
+                            for kind in 0..3 {
+                                let (resp, p) = ui.allocate_painter(
+                                    Vec2::new(13.0, 11.0),
+                                    Sense::hover(),
+                                );
+                                let r = resp.rect;
+                                let s = Stroke::new(1.0_f32, BLACK);
+                                p.rect_stroke(r, Rounding::ZERO, s);
+                                let g = r.shrink(3.0);
+                                let snap = |x: f32| x.round();
+                                match kind {
+                                    // Close: a cross.
+                                    0 => {
+                                        p.line_segment(
+                                            [
+                                                Pos2::new(snap(g.min.x), snap(g.min.y)),
+                                                Pos2::new(snap(g.max.x), snap(g.max.y)),
+                                            ],
+                                            s,
+                                        );
+                                        p.line_segment(
+                                            [
+                                                Pos2::new(snap(g.max.x), snap(g.min.y)),
+                                                Pos2::new(snap(g.min.x), snap(g.max.y)),
+                                            ],
+                                            s,
+                                        );
+                                    }
+                                    // Maximise: an outline.
+                                    1 => {
+                                        p.rect_stroke(
+                                            Rect::from_min_max(
+                                                Pos2::new(snap(g.min.x), snap(g.min.y)),
+                                                Pos2::new(snap(g.max.x), snap(g.max.y)),
+                                            ),
+                                            Rounding::ZERO,
+                                            s,
+                                        );
+                                    }
+                                    // Minimise: a bar on the baseline.
+                                    _ => {
+                                        p.line_segment(
+                                            [
+                                                Pos2::new(snap(g.min.x), snap(g.max.y)),
+                                                Pos2::new(snap(g.max.x), snap(g.max.y)),
+                                            ],
+                                            s,
+                                        );
+                                    }
+                                }
+                            }
+                        },
+                    );
+                });
+            });
+    }
+
     /// The event log, as a ticker across the header strip (Billy, 2026-08-04:
     /// "a kind of marquee box at the top"). The most recent `MARQUEE_LINES`
     /// measurements loop leftward at a constant rate, advanced in **whole
@@ -2501,7 +2506,12 @@ impl App {
     /// — longest at a full stop, less at a comma or a dash. The hash means
     /// there is no clock and no RNG in it, so a given box types with exactly
     /// the same rhythm every time it comes round.
-    fn char_dwell(i: usize, prev: Option<char>) -> f32 {
+    fn char_dwell(i: usize, prev: Option<char>, console: bool) -> f32 {
+        if console {
+            // The entity prints. Perfectly even, and it does not pause for
+            // punctuation — that absence is the tell.
+            return 1.0 / CONSOLE_CPS;
+        }
         let base = 1.0 / TYPE_CPS;
         let h = (i as u64).wrapping_mul(2654435761) ^ 0x9E37_79B9;
         let unit = ((h >> 13) & 0xFFFF) as f32 / 65535.0;
@@ -2640,7 +2650,7 @@ impl App {
         self.voice_credit += dt;
         while self.voice_revealed < chars.len() {
             let prev = self.voice_revealed.checked_sub(1).map(|k| chars[k]);
-            let cost = Self::char_dwell(self.voice_revealed, prev);
+            let cost = Self::char_dwell(self.voice_revealed, prev, is_intrusion);
             if self.voice_credit < cost {
                 break;
             }
@@ -2978,6 +2988,18 @@ impl eframe::App for App {
             if let Some(line) = log_line {
                 self.push_log(line);
             }
+            // The phase image lives under the melody parameters (Billy, 2026-08-04).
+            // It was under the presets in the right panel, where the app-wide padding
+            // pushed it past the bottom edge and it silently stopped drawing — a
+            // "draw it in whatever height is left" panel is one layout change away
+            // from having none left. Here it takes a fixed share of the panel and is
+            // *reserved* rather than leftover, so it cannot be squeezed out again.
+            ui.add_space(CELL_GUTTER);
+            let side = ui.available_height().min(ui.available_width()) - 22.0;
+            if side > 40.0 {
+                Self::inverted_strip(ui, "PHASE");
+                self.draw_phase(ui, side);
+            }
         });
 
         egui::SidePanel::right("ops").exact_width(250.0).show(ctx, |ui| {
@@ -3107,14 +3129,6 @@ impl eframe::App for App {
                     }
                 }
             });
-            // Spot G: the phase image takes whatever the panel has left, so
-            // the waveform can own the full width of the footer.
-            ui.add_space(6.0);
-            let left = ui.available_height() - 22.0;
-            if left > 60.0 {
-                Self::inverted_strip(ui, "PHASE");
-                self.draw_phase(ui, left);
-            }
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -3166,10 +3180,25 @@ impl eframe::App for App {
             let pose = self.shell_pose(stage);
             self.draw_starfield(&sky, stage, &pose);
             self.draw_monolith(&sky, stage, &pose);
-            self.draw_portrait(
-                &ui.painter().with_clip_rect(cell_z.shrink(3.0)),
-                cell_z.shrink(4.0),
-            );
+            // The panels are content-sized, so the only honest answer to "how big
+            // can the art be" is the running app's own measurement. Reported to the
+            // log on startup and on any resize.
+            let z = cell_z.shrink(4.0).size();
+            let area = (z.x.round() as i32, z.y.round() as i32);
+            if self.portrait_area != area {
+                self.portrait_area = area;
+                self.push_log(format!(
+                    "portrait area {}x{} px. aspect {:.2}.",
+                    area.0,
+                    area.1,
+                    area.0 as f32 / area.1.max(1) as f32
+                ));
+            }
+            // Cell Z is deliberately empty (Billy, 2026-08-04: "clear the zone").
+            // The portrait pipeline that filled it — dithered grids as animated
+            // point clouds, the scanline field, the fallback mark — is at HEAD if we
+            // want any of it back; the converter in `examples/png_to_grid.rs` and
+            // Billy's grids in `assets/portraits/` both survive untouched.
             ui.allocate_new_ui(
                 egui::UiBuilder::new().max_rect(cell_w.shrink(8.0)),
                 |ui| self.draw_voice(ui, now, dt),
@@ -3179,6 +3208,11 @@ impl eframe::App for App {
                 |ui| {
                     ui.style_mut().spacing.slider_width =
                         (cell_x.width() - 175.0).clamp(90.0, 220.0);
+                    // The cell keeps its size; the chrome takes its space out of the
+                    // dither filler at the bottom, which is ornament and has none to
+                    // lose.
+                    Self::window_chrome(ui, "PARAMETERS");
+                    ui.add_space(2.0);
             ui.horizontal(|ui| {
                 let mut clicked: Option<usize> = None;
                 for (i, roman) in ROMAN.iter().enumerate() {
@@ -3650,6 +3684,113 @@ mod tests {
             parse_portrait_grid(&"#".repeat(PORTRAIT_MAX_W)).is_some(),
             "rejected the max width"
         );
+    }
+
+    /// The two cadences must be distinguishable *as cadences*, not merely as speeds:
+    /// a person hesitates and varies, a device does neither. If console mode ever
+    /// picked up jitter or punctuation holds it would still be fast, and the tell
+    /// would be gone without anything looking broken.
+    #[test]
+    fn transcript_and_console_read_differently() {
+        let sentence = "It hummed back at me. Twice.";
+        let chars: Vec<char> = sentence.chars().collect();
+        let total = |console: bool| -> f32 {
+            (0..chars.len())
+                .map(|i| {
+                    App::char_dwell(i, i.checked_sub(1).map(|k| chars[k]), console)
+                })
+                .sum()
+        };
+        let (transcript, console) = (total(false), total(true));
+        assert!(
+            transcript > console * 2.0,
+            "the entity should print far faster than a person types: {transcript:.2}s \
+             vs {console:.2}s"
+        );
+
+        // Console is perfectly even — every character costs the same, whatever
+        // precedes it.
+        let a = App::char_dwell(0, None, true);
+        for (i, c) in chars.iter().enumerate() {
+            assert_eq!(
+                App::char_dwell(i, Some(*c), true),
+                a,
+                "console dwell varied at {i} after {c:?}"
+            );
+        }
+
+        // Transcript is not: it varies per character, and it holds at punctuation.
+        let plain = App::char_dwell(4, Some('m'), false);
+        let stop = App::char_dwell(4, Some('.'), false);
+        assert!(stop > plain * 5.0, "a full stop should hold: {stop} vs {plain}");
+        let varied: Vec<f32> = (0..12).map(|i| App::char_dwell(i, Some('m'), false)).collect();
+        assert!(
+            varied.windows(2).any(|w| w[0] != w[1]),
+            "transcript dwell is a metronome — the jitter is missing"
+        );
+
+        // And it stays deterministic: the same box types the same way every time.
+        assert_eq!(varied, (0..12).map(|i| App::char_dwell(i, Some('m'), false)).collect::<Vec<_>>());
+    }
+
+    /// The dither cycle ping-pongs without repeating either end, so it never jumps
+    /// from the densest frame to the sparsest and never stalls for two frames at a
+    /// turning point. An off-by-one here is a visible stutter twice per cycle.
+    #[test]
+    fn the_dither_cycle_pingpongs_seamlessly() {
+        let mk = |n: usize| Portrait {
+            key: "t".into(),
+            stamp: None,
+            frames: (0..n)
+                .map(|i| PortraitFrame {
+                    w: 10,
+                    h: 10,
+                    // i+1 points, so ink() — and therefore the frame's identity —
+                    // is distinct and ascending.
+                    pts: (0..=i as u8).map(|k| (k, 0)).collect(),
+                })
+                .collect(),
+        };
+
+        // One frame: always itself, never a panic.
+        let one = mk(1);
+        for k in 0..10 {
+            assert_eq!(one.frame_at(k as f32 * 0.5, 0.5).pts.len(), 1);
+        }
+
+        for n in [2usize, 3, 5, 13] {
+            let p = mk(n);
+            let seq: Vec<usize> = (0..(4 * n))
+                .map(|k| p.frame_at(k as f32 * 0.5 + 0.01, 0.5).pts.len() - 1)
+                .collect();
+            // Walks up to the top and back down.
+            assert_eq!(seq[0], 0, "n={n} should start at the sparsest");
+            assert_eq!(seq[n - 1], n - 1, "n={n} should reach the densest");
+            // Never jumps more than one frame, including across the wrap.
+            for w in seq.windows(2) {
+                assert_eq!(
+                    (w[1] as i64 - w[0] as i64).abs(),
+                    1,
+                    "n={n} jumped {:?} -> {:?} in {seq:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+            // Both ends are visited exactly once per cycle: no double-length hold.
+            let cycle = &seq[..(2 * n - 2)];
+            assert_eq!(
+                cycle.iter().filter(|&&i| i == 0).count(),
+                1,
+                "n={n} held the sparsest frame twice: {cycle:?}"
+            );
+            assert_eq!(
+                cycle.iter().filter(|&&i| i == n - 1).count(),
+                1,
+                "n={n} held the densest frame twice: {cycle:?}"
+            );
+            // And it is periodic.
+            assert_eq!(seq[0], seq[2 * n - 2], "n={n} did not close its cycle");
+        }
     }
 
     /// A BOM and CRLF are both stripped — the two ways Windows has already broken a

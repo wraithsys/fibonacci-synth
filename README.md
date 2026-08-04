@@ -696,8 +696,11 @@ Panels:
 - **LOCAL φ INTEGRITY**: a display composite, `100·(1−max(rip, haunt))` —
   the formula is printed next to the meter.
 - **Scopes**: the mono waveform takes the full width of the footer; the L/R
-  Lissajous (mid/side rotated) — the phase image itself — sits under the
-  presets in the right panel, circular whatever its box's aspect.
+  Lissajous (mid/side rotated) — the phase image itself — sits under the melody
+  parameters in the left panel, circular whatever its box's aspect. It is given a
+  reserved share of the panel rather than "whatever height is left": under the
+  presets on leftover height, one app-wide padding change pushed it past the bottom
+  edge and it silently stopped drawing.
 - **Event log**: timestamps + measurements only. Every line the program
   authors must be verifiable against the engine or against mathematics;
   anything else is a bug. It rides a **marquee** in the header strip: the six
