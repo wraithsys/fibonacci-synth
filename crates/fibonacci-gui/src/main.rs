@@ -925,6 +925,23 @@ fn intrude_chance(agitation: f32) -> f32 {
     (DECAY_INTRUDE_CHANCE + agitation.clamp(0.0, 1.0) * AGITATE_INTRUDE_CHANCE).min(0.95)
 }
 
+/// The asset name a portrait is looked up under: `portraits/<stem>.txt`.
+///
+/// Any extension in the data is discarded, so `engineer_1bit`, `engineer_1bit.png`
+/// and `engineer_1bit.txt` all resolve to the same file. Any directory part is
+/// stripped and `..` is refused: the name arrives from a data file, so it must not
+/// be able to point outside the portraits folder.
+fn portrait_asset_name(avatar: &str) -> Option<String> {
+    let stem = avatar.rsplit_once('.').map(|(s, _)| s).unwrap_or(avatar);
+    let stem = stem.rsplit(['/', '\\']).next().unwrap_or(stem);
+    // Stripping the directory is what makes escape impossible; this rejects the
+    // leftovers that are not names at all — "", ".", "..", "..." — which would
+    // otherwise resolve to a nonsense file inside the folder.
+    stem.chars()
+        .any(|c| c != '.')
+        .then(|| format!("portraits/{stem}.txt"))
+}
+
 fn rarity_weight(rarity: &str) -> u32 {
     match rarity {
         "common" => 8,
@@ -1017,6 +1034,136 @@ impl Relic {
     }
 }
 
+// ── The relic log's on-disk shape ──────────────────────────────────────────
+// Characters own their entries, so **adding a line to an existing witness is four
+// lines of JSON, and adding a witness is one block** (Billy, 2026-08-04). The
+// original flat array repeated `archetype`, `era`, `rarity` and `avatar` on every
+// single entry, which meant thirty copies of eleven characters' details and an id
+// to invent each time.
+//
+// Everything except the log lines is optional. An entry inherits its character's
+// archetype, era, rarity and portrait unless it says otherwise — which is what
+// lets the eight Logalith intrusions each keep their own A–H label while sharing
+// one portrait and one rarity.
+
+/// Ids are **assigned by position** from the distinct Fibonacci numbers — 1, 2, 3,
+/// 5, 8, 13 … — so Billy never types one and the property holds by construction.
+///
+/// This is not a retrofit: the hand-written ids in the original file were exactly
+/// this sequence in exactly this order, which is how the grouped structure was
+/// confirmed to be the shape the data already had. Saturating, because F(87)
+/// leaves u64 and a log that long is not the problem to solve.
+fn fib_id(n: usize) -> u64 {
+    let (mut a, mut b) = (1u64, 2u64);
+    for _ in 0..n {
+        let next = a.saturating_add(b);
+        a = b;
+        b = next;
+    }
+    a
+}
+
+#[derive(serde::Deserialize)]
+struct RelicFile {
+    #[serde(default)]
+    characters: Vec<RelicCharacter>,
+}
+
+#[derive(serde::Deserialize)]
+struct RelicCharacter {
+    #[serde(default)]
+    archetype: String,
+    #[serde(default)]
+    era: String,
+    #[serde(default)]
+    rarity: String,
+    /// Portrait basename, extension optional — `portraits/<name>.txt` is what gets
+    /// loaded. `avatar` is accepted as an alias so the original field name still
+    /// works.
+    #[serde(default, alias = "avatar")]
+    portrait: String,
+    #[serde(default)]
+    entries: Vec<RelicEntry>,
+}
+
+/// One thing said. Every field but the lines is an optional override of the
+/// character it belongs to.
+#[derive(serde::Deserialize)]
+struct RelicEntry {
+    #[serde(default)]
+    archetype: String,
+    #[serde(default)]
+    era: String,
+    #[serde(default)]
+    rarity: String,
+    #[serde(default, alias = "avatar")]
+    portrait: String,
+    #[serde(default)]
+    tstamp: String,
+    #[serde(default)]
+    alias: String,
+    #[serde(default)]
+    extra: String,
+    #[serde(default)]
+    log: Vec<String>,
+    #[serde(default)]
+    intrusion: Vec<String>,
+}
+
+/// Either shape loads. The grouped object is the format to author in; the original
+/// flat array still parses, so a half-converted file — or an old copy pasted back
+/// in — is never a silent mute.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum RelicSource {
+    Grouped(RelicFile),
+    Flat(Vec<Relic>),
+}
+
+impl RelicSource {
+    fn flatten(self) -> Vec<Relic> {
+        let mut out = Vec::new();
+        match self {
+            RelicSource::Flat(v) => out = v,
+            RelicSource::Grouped(f) => {
+                for c in f.characters {
+                    for e in c.entries {
+                        let pick = |entry: String, character: &String| {
+                            if entry.is_empty() {
+                                character.clone()
+                            } else {
+                                entry
+                            }
+                        };
+                        out.push(Relic {
+                            id: String::new(), // assigned below, by position
+                            archetype: pick(e.archetype, &c.archetype),
+                            era: pick(e.era, &c.era),
+                            rarity: pick(e.rarity, &c.rarity),
+                            avatar: pick(e.portrait, &c.portrait),
+                            metadata: RelicMeta {
+                                tstamp: e.tstamp,
+                                alias: e.alias,
+                                extra: e.extra,
+                            },
+                            log: e.log,
+                            intrusion: e.intrusion,
+                        });
+                    }
+                }
+            }
+        }
+        // Entries that say nothing would be selectable but blank.
+        out.retain(|r| !r.log.is_empty() || !r.intrusion.is_empty());
+        for (i, r) in out.iter_mut().enumerate() {
+            if r.id.is_empty() {
+                r.id = fib_id(i).to_string();
+            }
+        }
+        out
+    }
+}
+
 /// Load the relic log from the assets.
 fn load_relics() -> Vec<Relic> {
     for path in asset_dirs().into_iter().map(|d| d.join("relic_log.json")) {
@@ -1028,8 +1175,14 @@ fn load_relics() -> Vec<Relic> {
             // Same family as the CRLF bug that used to empty the voice pools: text
             // authored on Windows needs meeting halfway.
             let text = text.trim_start_matches('\u{feff}');
-            match serde_json::from_str::<Vec<Relic>>(text) {
-                Ok(relics) => return relics,
+            match serde_json::from_str::<RelicSource>(text) {
+                Ok(src) => {
+                    let relics = src.flatten();
+                    if !relics.is_empty() {
+                        return relics;
+                    }
+                    eprintln!("relic_log.json parsed but held no entries");
+                }
                 // A malformed file must not silence the instrument; it also must
                 // not be silent about itself.
                 Err(e) => eprintln!("relic_log.json unreadable: {e}"),
@@ -1918,8 +2071,10 @@ impl App {
             self.portrait = None;
             return;
         }
-        let stem = avatar.rsplit_once('.').map(|(s, _)| s).unwrap_or(&avatar);
-        let name = format!("portraits/{stem}.txt");
+        let Some(name) = portrait_asset_name(&avatar) else {
+            self.portrait = None;
+            return;
+        };
         let Some(path) = asset_path(&name) else {
             self.portrait = None;
             return;
@@ -3531,10 +3686,10 @@ mod tests {
                 !r.log.is_empty() || !r.intrusion.is_empty(),
                 "relic {id} has nothing to say"
             );
-            assert!(!r.avatar.is_empty(), "relic {id} names no avatar");
+            assert!(!r.avatar.is_empty(), "relic {id} names no portrait");
             assert!(
-                r.avatar.ends_with(".png"),
-                "relic {}'s avatar {:?} is not a png",
+                portrait_asset_name(&r.avatar).is_some(),
+                "relic {}'s portrait {:?} does not resolve to an asset",
                 id,
                 r.avatar
             );
@@ -3552,6 +3707,124 @@ mod tests {
             relics.iter().any(|r| !r.log.is_empty()),
             "no human logs — there would be nothing to interrupt"
         );
+    }
+
+    /// An entry inherits everything from its character and overrides only what it
+    /// states. This is the whole point of the grouped shape: adding a line to an
+    /// existing witness must not mean retyping who they are.
+    #[test]
+    fn entries_inherit_their_character() {
+        let json = r#"{ "characters": [ {
+            "archetype": "Overworked Acoustic Engineer",
+            "era": "1987", "rarity": "common", "portrait": "engineer_1bit",
+            "entries": [
+              { "log": ["one"] },
+              { "log": ["two"], "era": "1988", "archetype": "Retired Engineer" }
+            ] } ] }"#;
+        let relics = serde_json::from_str::<RelicSource>(json).unwrap().flatten();
+        assert_eq!(relics.len(), 2);
+        // Inherited wholesale.
+        assert_eq!(relics[0].archetype, "Overworked Acoustic Engineer");
+        assert_eq!(relics[0].era, "1987");
+        assert_eq!(relics[0].rarity, "common");
+        assert_eq!(relics[0].avatar, "engineer_1bit");
+        // Overridden where stated, inherited where not.
+        assert_eq!(relics[1].archetype, "Retired Engineer");
+        assert_eq!(relics[1].era, "1988");
+        assert_eq!(relics[1].rarity, "common", "rarity should still be inherited");
+        assert_eq!(relics[1].avatar, "engineer_1bit");
+    }
+
+    /// Ids are assigned by position from the distinct Fibonacci numbers, so Billy
+    /// never types one. The sequence must match the ids that were hand-written in
+    /// the original file — that correspondence is what proved the grouped shape was
+    /// the shape the data already had.
+    #[test]
+    fn ids_are_positional_fibonacci() {
+        let expected: [u64; 12] = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233];
+        for (i, &want) in expected.iter().enumerate() {
+            assert_eq!(fib_id(i), want, "position {i}");
+        }
+        // Saturating rather than overflowing: a log this long is not our problem,
+        // but a panic would be.
+        assert!(fib_id(200) > 0, "fib_id must not overflow to zero or panic");
+    }
+
+    /// The original flat array still parses, so a half-converted file — or an old
+    /// copy pasted back in — is never a silent mute.
+    #[test]
+    fn the_original_flat_shape_still_loads() {
+        let json = r#"[ { "id": "99", "archetype": "Survivor", "era": "unknown",
+            "rarity": "rare", "avatar": "survivor_1bit.png",
+            "metadata": { "tstamp": "t", "alias": "a", "extra": "e" },
+            "log": ["found it"], "intrusion": [] } ]"#;
+        let relics = serde_json::from_str::<RelicSource>(json).unwrap().flatten();
+        assert_eq!(relics.len(), 1);
+        assert_eq!(relics[0].archetype, "Survivor");
+        assert_eq!(relics[0].id, "99", "an explicit id must be respected");
+        // A .png in old data still resolves — the extension is discarded.
+        assert_eq!(
+            portrait_asset_name(&relics[0].avatar).unwrap(),
+            "portraits/survivor_1bit.txt"
+        );
+    }
+
+    /// Entries with nothing to say are dropped rather than selected and rendered
+    /// blank.
+    #[test]
+    fn silent_entries_are_dropped() {
+        let json = r#"{ "characters": [ { "archetype": "X", "portrait": "x",
+            "entries": [ { "log": [] }, { "log": ["real"] }, { "intrusion": [] } ] } ] }"#;
+        let relics = serde_json::from_str::<RelicSource>(json).unwrap().flatten();
+        assert_eq!(relics.len(), 1, "empty entries should not survive");
+        assert_eq!(relics[0].log, vec!["real"]);
+        assert_eq!(relics[0].id, "1", "ids are assigned after the cull, not before");
+    }
+
+    /// A portrait name comes out of a data file, so whatever it says, the result
+    /// must address something inside the portraits folder and nothing else.
+    ///
+    /// Directory parts are **stripped rather than rejected**, which is deliberate:
+    /// `portraits/engineer_1bit.png` is a very likely thing to write given what the
+    /// folder is called, and stripping makes it work instead of failing silently.
+    /// Stripping is also what makes escape impossible, so it is the safety property
+    /// and the convenience at once.
+    #[test]
+    fn portrait_names_always_stay_inside_their_folder() {
+        assert_eq!(
+            portrait_asset_name("engineer_1bit").unwrap(),
+            "portraits/engineer_1bit.txt"
+        );
+        // Whatever extension the data carries, it resolves to the same file.
+        for n in ["monk_1bit", "monk_1bit.png", "monk_1bit.txt"] {
+            assert_eq!(portrait_asset_name(n).unwrap(), "portraits/monk_1bit.txt");
+        }
+        // The invariant, over everything hostile or careless.
+        for n in [
+            "../../secrets/key.png",
+            "..\\..\\windows\\system32\\x.png",
+            "portraits/face.png",
+            "nested/dir/face.png",
+            "/etc/passwd",
+            "C:\\keys\\a.png",
+        ] {
+            if let Some(got) = portrait_asset_name(n) {
+                assert!(
+                    got.starts_with("portraits/"),
+                    "{n:?} escaped to {got:?}"
+                );
+                assert!(!got.contains(".."), "{n:?} left traversal in {got:?}");
+                assert_eq!(
+                    got.matches('/').count(),
+                    1,
+                    "{n:?} produced a nested path {got:?}"
+                );
+            }
+        }
+        // Nothing usable is refused outright rather than guessed at.
+        assert_eq!(portrait_asset_name(""), None, "empty");
+        assert_eq!(portrait_asset_name(".png"), None, "no stem at all");
+        assert_eq!(portrait_asset_name(".."), None, "bare traversal");
     }
 
     /// Agitation fills under sustained subversion, drains when the player relents,
