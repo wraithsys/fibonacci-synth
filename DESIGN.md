@@ -96,7 +96,38 @@ on record:
   Text authored on Windows needs meeting halfway; this is the second time (CRLF was
   the first).
 
-Still open: the 11 avatar PNGs, and where the metadata sits.
+### Space Z: drawn, not stored
+
+Billy: *"why cant we draw it?"*, then *"instead of storing all those pngs you have
+a bit of code compiled to draw it and the animated motion"*, then the clarification
+that mattered — *"my plan is just to find licensable images and dither them or
+something to get them into a drawable format for you thats why i asked what do you
+need."*
+
+So the portrait is a **point cloud**, not an image: a dithered 1-bit grid stored as
+text, whose inked cells become points, and the points are what animate. The reason
+is the same one that made the shell work — **points and strokes animate, rasters
+don't.** A raster can only be moved as a block in whole pixels; here every point
+breathes on its own hashed phase, a scan band crosses them, and the cloud scatters
+outward with agitation.
+
+Consequences: the PNG pipeline built for Earth is deleted, and the `image` crate
+with it. Recoverable from `b9bb0ba` if a raster is ever wanted again.
+
+Rejected along the way: **procedurally constructed faces.** Geometry is what this
+program is good at and faces are what it would be worst at — a built face at plinth
+size reads as broken rather than stylised, and we are all far too well tuned to
+notice. Dithered *photographs* of faces are a different thing entirely and are what
+Billy is sourcing. A single drawn mark survives as the fallback for an unfilled
+slot: the Logalith's own shell in a ring, turning on the real one's clock.
+
+Tooling: `tools/aseprite/bypo-portrait-grid.lua` exports the grid from Aseprite,
+which is the right editor because it lets the dither be corrected **by hand** — on a
+64×80 face, four fixed pixels around the eyes is the difference between a person and
+a smudge.
+
+Still open: the eleven portraits themselves (checklist in
+`assets/portraits/README.md`), and where the metadata sits.
 
 ## The mythology, and what the Logalith's panel is (Billy, 2026-08-04)
 

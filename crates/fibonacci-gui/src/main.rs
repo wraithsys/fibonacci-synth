@@ -787,14 +787,6 @@ enum Dread {
 /// triggers").
 const DREAD_SMOOTH_S: f32 = 0.9;
 
-/// A piece of 1-bit art loaded from the assets: thresholded to two colours and
-/// uploaded with nearest-neighbour filtering, so a whole-number scale keeps
-/// every pixel square. Used for the portrait plinth and for the planet.
-///
-/// The portrait slot follows the voice pools exactly — `portrait_critical.png`,
-/// `portrait_low.png`, `portrait.png`, each falling back to the next — so the
-/// face can change as integrity drains. All of it is Billy's pen, like
-/// `voice.txt`; while a slot is empty its panel claims nothing.
 /// Where the shell sits and how far it is turned this frame. Shared between the
 /// shell and the background, so the lensing bends around the shell that is
 /// actually drawn.
@@ -810,76 +802,116 @@ struct ShellPose {
     max_r: f32,
 }
 
-struct BitArt {
+// ── Space Z: drawn portraits ────────────────────────────────────────────────
+// Billy, 2026-08-04: "instead of storing all those pngs you have a bit of code
+// compiled to draw it and the animated motion", and "my plan is just to find
+// licensable images and dither them or something to get them into a drawable
+// format for you".
+//
+// So the portrait is not an image the program displays — it is a **point cloud
+// the program draws**. Billy dithers a licensed image to 1-bit and exports it as
+// a text grid; the loader turns every inked cell into a point, and the points are
+// what get animated. That is the whole reason for the format: a raster can only
+// be moved in whole pixels as a block, whereas every point in a cloud can move
+// independently. The same lesson as the shell — strokes and points animate,
+// rasters don't.
+/// Side of the portrait's square, as a fraction of the plinth's shorter axis.
+const SIGIL_FRAC: f32 = 0.78;
+/// A source grid wider or taller than this is rejected: the cloud is redrawn
+/// every frame, so its point count is a per-frame cost. 64×80 lands around 2,000
+/// points, which is the same order as the shell's stroke count.
+const PORTRAIT_MAX_W: usize = 96;
+const PORTRAIT_MAX_H: usize = 120;
+/// Per-point breathing: amplitude in pixels, and the period range in seconds.
+/// Every point carries its own phase from a hash of its position, so the cloud
+/// shimmers like a printout being read rather than sliding as a sheet.
+const PORTRAIT_BREATH_PX: f32 = 0.9;
+const PORTRAIT_BREATH_S: f32 = 3.1;
+/// How far points scatter outward at full agitation. The record is disturbed by
+/// the thing it is a record of.
+const PORTRAIT_SCATTER_PX: f32 = 4.0;
+/// A scan band crosses the portrait on this period, displacing the points it
+/// passes over by a pixel — the plinth is a screen, and something is reading it.
+const PORTRAIT_SCAN_S: f32 = 7.0;
+const PORTRAIT_SCAN_FRAC: f32 = 0.16;
+
+/// A pixel-snapped stroke. Feathering is off, so a fractional endpoint is a
+/// blurry endpoint.
+fn sig_line(p: &egui::Painter, a: Pos2, b: Pos2, w: f32) {
+    p.line_segment(
+        [
+            Pos2::new(a.x.round(), a.y.round()),
+            Pos2::new(b.x.round(), b.y.round()),
+        ],
+        Stroke::new(w, WHITE),
+    );
+}
+
+/// A polyline arc from `a0` to `a1` radians. Segment count follows arc length, so
+/// a big ring is not a polygon and a small one is not a heap of slivers.
+fn sig_arc(p: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, w: f32) {
+    let n = (((a1 - a0).abs() * r / 3.0).ceil() as usize).clamp(3, 400);
+    let pts: Vec<Pos2> = (0..=n)
+        .map(|k| {
+            let a = a0 + (a1 - a0) * k as f32 / n as f32;
+            Pos2::new((c.x + a.cos() * r).round(), (c.y + a.sin() * r).round())
+        })
+        .collect();
+    p.add(egui::Shape::line(pts, Stroke::new(w, WHITE)));
+}
+
+fn sig_ring(p: &egui::Painter, c: Pos2, r: f32, w: f32) {
+    sig_arc(p, c, r, 0.0, std::f32::consts::TAU, w);
+}
+
+/// A portrait: the inked cells of a dithered 1-bit grid, kept as points because
+/// points are what can be animated individually.
+struct Portrait {
     path: String,
     stamp: Option<SystemTime>,
-    /// The decoded source, kept so the on-screen texture can be rebuilt at
-    /// whatever size the panel gives it (see `rebuild_tex`).
-    lum: Vec<u8>,
-    alpha: Vec<u8>,
-    src: [usize; 2],
-    tex: egui::TextureHandle,
-    /// The pixel size `tex` was built for.
-    tex_size: [usize; 2],
+    w: usize,
+    h: usize,
+    pts: Vec<(u8, u8)>,
 }
 
-impl BitArt {
-    fn size(&self) -> Vec2 {
-        Vec2::new(self.src[0] as f32, self.src[1] as f32)
+/// Parse a dithered 1-bit grid.
+///
+/// One line per pixel row. **Space, `.` and `0` are empty; every other character
+/// is ink** — deliberately liberal, because image-to-ASCII converters emit all
+/// sorts (`#`, `@`, `*`, `X`, `1`, `%`) and Billy should not have to match a
+/// character set. Comments start with `//`, *not* `#`, since `#` is the commonest
+/// ink character there is. A UTF-8 BOM is stripped, as everywhere else.
+///
+/// Ragged lines are fine: width is the longest row, and short rows are simply
+/// empty to their right.
+fn parse_portrait_grid(text: &str) -> Option<(usize, usize, Vec<(u8, u8)>)> {
+    let text = text.trim_start_matches('\u{feff}').replace('\r', "");
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect();
+    // Trim wholly-empty rows off the top and bottom, so a converter's padding
+    // does not shrink the drawn portrait.
+    let inked = |l: &str| l.chars().any(|c| !matches!(c, ' ' | '.' | '0'));
+    let first = rows.iter().position(|l| inked(l))?;
+    let last = rows.iter().rposition(|l| inked(l))?;
+    let rows = &rows[first..=last];
+    let w = rows.iter().map(|l| l.chars().count()).max()?;
+    let h = rows.len();
+    if w == 0 || h == 0 || w > PORTRAIT_MAX_W || h > PORTRAIT_MAX_H {
+        return None;
     }
-
-    /// Build the on-screen texture at exactly `want` pixels.
-    ///
-    /// Reduction is **area-averaged, then ordered-dithered** — never sampled.
-    /// Billy's Earth is 1000×1000 of ~10 px blocks; whole-number
-    /// nearest-neighbour into a 139 px box would sample every 7th pixel, which
-    /// takes some blocks twice and drops others entirely and turns the
-    /// continents into irregular mush. Averaging each target pixel's source
-    /// block recovers a true local grey, and the 4×4 Bayer threshold turns that
-    /// grey back into strict 1-bit — the same dither primitive the rest of the
-    /// UI shades with. At 1:1 the block is one pixel and the result is exactly
-    /// the source, losslessly.
-    fn rebuild_tex(&mut self, ctx: &egui::Context, name: &str, want: [usize; 2]) {
-        let (tw, th) = (want[0].max(1), want[1].max(1));
-        let (sw, sh) = (self.src[0], self.src[1]);
-        let mut pixels = Vec::with_capacity(tw * th);
-        for ty in 0..th {
-            let y0 = ty * sh / th;
-            let y1 = (((ty + 1) * sh + th - 1) / th).max(y0 + 1).min(sh);
-            for tx in 0..tw {
-                let x0 = tx * sw / tw;
-                let x1 = (((tx + 1) * sw + tw - 1) / tw).max(x0 + 1).min(sw);
-                let mut lum = 0u32;
-                let mut alpha = 0u32;
-                let mut count = 0u32;
-                for y in y0..y1 {
-                    for x in x0..x1 {
-                        lum += self.lum[y * sw + x] as u32;
-                        alpha += self.alpha[y * sw + x] as u32;
-                        count += 1;
-                    }
-                }
-                let count = count.max(1);
-                let (lum, alpha) = (lum / count, alpha / count);
-                pixels.push(if alpha < 128 {
-                    Color32::TRANSPARENT
-                } else if lum as f32 / 255.0 > BAYER[ty & 3][tx & 3] {
-                    WHITE
-                } else {
-                    BLACK
-                });
+    let mut pts = Vec::new();
+    for (y, line) in rows.iter().enumerate() {
+        for (x, c) in line.chars().enumerate() {
+            if !matches!(c, ' ' | '.' | '0') {
+                pts.push((x as u8, y as u8));
             }
         }
-        self.tex = ctx.load_texture(
-            name,
-            egui::ColorImage { size: [tw, th], pixels },
-            egui::TextureOptions::NEAREST,
-        );
-        self.tex_size = [tw, th];
     }
+    (!pts.is_empty()).then_some((w, h, pts))
 }
 
-/// Candidate portrait files for a dread band, most specific first.
 // ── The relic log ──────────────────────────────────────────────────────────
 // `assets/relic_log.json` (Billy's, 2026-08-04): 30 entries, every id a
 // Fibonacci number, 18 archetypes sharing 11 avatars. 21 are human logs, 8 are
@@ -1031,100 +1063,6 @@ fn asset_path(base: &str) -> Option<std::path::PathBuf> {
 
 fn file_stamp(path: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
-}
-
-/// Decode a PNG to strict 1-bit. Alpha below half is left transparent so
-/// whatever is behind the art shows through its own background — the plinth's
-/// scanlines, or the starfield; everything opaque snaps to white or black at
-/// half luminance. Two colours, no in-between: a greyscale portrait would
-/// break the first hard rule in DESIGN.md.
-fn load_bit_art(ctx: &egui::Context, name: &str, path: &std::path::Path) -> Option<BitArt> {
-    let bytes = std::fs::read(path).ok()?;
-    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
-    let rgba = decoded.to_rgba8();
-    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
-    if w == 0 || h == 0 {
-        return None;
-    }
-    let mut lum = Vec::with_capacity(w * h);
-    let mut alpha = Vec::with_capacity(w * h);
-    for p in rgba.pixels() {
-        let l = 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
-        lum.push(l.round().clamp(0.0, 255.0) as u8);
-        alpha.push(p[3]);
-    }
-    let mut art = BitArt {
-        path: path.to_string_lossy().into_owned(),
-        stamp: file_stamp(path),
-        lum,
-        alpha,
-        src: [w, h],
-        tex: ctx.load_texture(
-            name,
-            egui::ColorImage::new([1, 1], Color32::TRANSPARENT),
-            egui::TextureOptions::NEAREST,
-        ),
-        tex_size: [0, 0],
-    };
-    art.rebuild_tex(ctx, name, [w, h]);
-    Some(art)
-}
-
-/// The on-screen size for a piece of art inside `cap`, aspect preserved: a
-/// whole-number upscale when the art fits, or an exact fit when it does not —
-/// in which case the texture is rebuilt once at that size by area-averaging,
-/// rather than pixels being thrown away every frame.
-fn art_box(size: Vec2, cap: Vec2) -> Vec2 {
-    let fit = (cap.x / size.x).min(cap.y / size.y);
-    if fit >= 1.0 {
-        size * fit.floor()
-    } else {
-        // Reduce by a whole-number ratio. Art like Billy's Earth is itself
-        // built of blocks — 1000 px of ~10 px pixels — and a fractional ratio
-        // splits those blocks across target pixels, which area-averaging turns
-        // to grey and the dither then breaks up. `1000 / 5 = 200` keeps every
-        // block exactly 2×2. Rounding the divisor *up* is what guarantees the
-        // result still fits the cap.
-        size / (1.0 / fit).ceil()
-    }
-}
-
-/// Keep an art slot's texture built for the size it is actually drawn at, so a
-/// reduction happens once per resize instead of once per frame. Upscales stay
-/// at source resolution and are magnified by NEAREST.
-fn fit_slot(ctx: &egui::Context, slot: &mut Option<BitArt>, name: &str, target: Vec2) {
-    let Some(art) = slot else {
-        return;
-    };
-    let want = [
-        target.x.round().max(1.0) as usize,
-        target.y.round().max(1.0) as usize,
-    ];
-    let want = if want[0] >= art.src[0] { art.src } else { want };
-    if art.tex_size != want {
-        art.rebuild_tex(ctx, name, want);
-    }
-}
-
-/// Point an art slot at the first readable candidate, reloading when the file
-/// on disk changes — the same hot-reload contract the text assets get, so
-/// Billy can draw with the instrument running.
-fn refresh_slot(
-    ctx: &egui::Context,
-    slot: &mut Option<BitArt>,
-    candidates: &[&str],
-    name: &str,
-) {
-    let wanted = candidates.iter().find_map(|n| asset_path(n));
-    match (&slot, &wanted) {
-        (_, None) => *slot = None,
-        (Some(cur), Some(path)) => {
-            if cur.path != path.to_string_lossy() || cur.stamp != file_stamp(path) {
-                *slot = load_bit_art(ctx, name, path);
-            }
-        }
-        (None, Some(path)) => *slot = load_bit_art(ctx, name, path),
-    }
 }
 
 /// The shell's polar radius at `theta`, in units of its outermost radius, with
@@ -1290,7 +1228,7 @@ struct App {
     /// Space Z's art, if a slot is filled, and the band it was resolved for —
     /// so a band change re-resolves the slot immediately instead of waiting
     /// for the next asset poll.
-    portrait: Option<BitArt>,
+    portrait: Option<Portrait>,
     /// The avatar filename the plinth is currently holding, so a change of
     /// speaker reloads it immediately instead of waiting for the asset poll.
     portrait_avatar: String,
@@ -1845,18 +1783,14 @@ impl App {
         );
     }
 
-    /// Build the portrait's texture for the size it is actually drawn at.
-    fn fit_art(&mut self, ctx: &egui::Context, plinth: Rect) {
-        if let Some(size) = self.portrait_rect(plinth).map(|r| r.size()) {
-            fit_slot(ctx, &mut self.portrait, "portrait", size);
-        }
-    }
-
     /// Space Z: the portrait plinth. Horizontal scanlines fill the field
-    /// (reference: the striped pixel-art portraits in Billy's image 5), and
-    /// the art — if a slot is filled — stands on them at a whole-number
-    /// scale, so one source pixel is always an exact square of screen pixels.
-    #[allow(clippy::needless_pass_by_ref_mut)]
+    /// (reference: the striped pixel-art portraits in Billy's image 5), and the
+    /// portrait's point cloud stands on them — or the mark, if this archetype has
+    /// no portrait yet.
+    ///
+    /// The scanlines are laid on whole pixels and the *field* is what the cloud
+    /// sits against, so a dithered figure with an empty background reads as
+    /// standing on stripes exactly as in the reference.
     fn draw_portrait(&self, painter: &egui::Painter, rect: Rect) {
         let mut y = rect.min.y.ceil();
         while y < rect.max.y {
@@ -1867,32 +1801,114 @@ impl App {
             );
             y += SCANLINE_PITCH;
         }
-        if let (Some(art), Some(box_)) = (&self.portrait, self.portrait_rect(rect)) {
-            painter.image(
-                art.tex.id(),
-                box_,
-                Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+        if !self.draw_portrait_cloud(painter, rect) {
+            self.draw_portrait_mark(painter, rect);
+        }
+    }
+
+    /// Draw the portrait as an animated point cloud. Returns false if there is no
+    /// portrait, so the caller can fall back to the mark.
+    ///
+    /// Three motions, all from state we already have and all in whole pixels:
+    /// each point **breathes** on its own hashed phase, so the cloud shimmers like
+    /// a printout being read rather than sliding as one sheet; a **scan band**
+    /// crosses it, nudging the points it passes; and the cloud **scatters outward
+    /// with agitation**, so the record is disturbed by the thing it is a record of.
+    fn draw_portrait_cloud(&self, painter: &egui::Painter, rect: Rect) -> bool {
+        let Some(p) = &self.portrait else {
+            return false;
+        };
+        let side = rect.width().min(rect.height()) * SIGIL_FRAC;
+        let cell = (side / p.w.max(p.h) as f32).floor().max(1.0);
+        let (gw, gh) = (p.w as f32 * cell, p.h as f32 * cell);
+        let origin = Pos2::new(
+            (rect.center().x - gw * 0.5).round(),
+            (rect.center().y - gh * 0.5).round(),
+        );
+        let mid = Vec2::new(gw * 0.5, gh * 0.5);
+        let t = self.last_frame_time as f32;
+        let scatter = PORTRAIT_SCATTER_PX * self.agitation;
+        // Scan band, in grid rows.
+        let band = (t / PORTRAIT_SCAN_S).fract() * p.h as f32;
+        let band_w = (p.h as f32 * PORTRAIT_SCAN_FRAC).max(1.0);
+        let size = Vec2::splat(cell);
+
+        for &(gx, gy) in &p.pts {
+            let (fx, fy) = (gx as f32, gy as f32);
+            let h = (gx as u32)
+                .wrapping_mul(73_856_093)
+                .wrapping_add((gy as u32).wrapping_mul(19_349_663));
+            let phase = (h & 1023) as f32 / 1023.0 * std::f32::consts::TAU;
+            let mut off = Vec2::new(
+                (t / PORTRAIT_BREATH_S * std::f32::consts::TAU + phase).sin(),
+                (t / PORTRAIT_BREATH_S * std::f32::consts::TAU + phase * 1.7).cos(),
+            ) * PORTRAIT_BREATH_PX;
+            if scatter > 0.01 {
+                let from_mid = Vec2::new(fx * cell - mid.x, fy * cell - mid.y);
+                let d = from_mid.length().max(1.0);
+                let weight = ((h >> 11) & 255) as f32 / 255.0;
+                off += from_mid / d * scatter * weight;
+            }
+            if (fy - band).abs() < band_w {
+                off.x += 1.0;
+            }
+            painter.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(
+                        (origin.x + fx * cell + off.x).round(),
+                        (origin.y + fy * cell + off.y).round(),
+                    ),
+                    size,
+                ),
+                Rounding::ZERO,
                 WHITE,
+            );
+        }
+        true
+    }
+
+    /// The mark shown when an archetype has no portrait yet: the Logalith's own
+    /// shell in a ring, turning on the same clock as the real one. The instrument
+    /// saying "this record carries no image" in its own vocabulary, rather than an
+    /// empty box.
+    fn draw_portrait_mark(&self, painter: &egui::Painter, rect: Rect) {
+        let side = rect.width().min(rect.height()) * SIGIL_FRAC * 0.6;
+        let c = rect.center();
+        let tau = std::f32::consts::TAU;
+        sig_ring(painter, c, side * 0.5, 2.0);
+        let theta_max = SHELL_TURNS * tau;
+        let r_max = side * 0.34;
+        let mut pts: Vec<Pos2> = Vec::new();
+        let mut th = tau; // skip the innermost turns: they close to nothing here
+        while th <= theta_max {
+            let r = r_max * shell_unit_r(th, 0.0, 0.0);
+            let a = th + self.spin;
+            pts.push(Pos2::new(
+                (c.x + a.cos() * r).round(),
+                (c.y + a.sin() * r).round(),
+            ));
+            th += (3.0 / r.max(1.0)).clamp(0.02, 0.4);
+        }
+        if pts.len() > 1 {
+            painter.add(egui::Shape::line(pts, Stroke::new(1.0_f32, WHITE)));
+        }
+        // Four ticks on the ring, at the quarters.
+        for k in 0..4 {
+            let a = k as f32 * tau / 4.0 + self.spin * 0.5;
+            let (i, o) = (side * 0.5 - 4.0, side * 0.5 + 4.0);
+            sig_line(
+                painter,
+                Pos2::new(c.x + a.cos() * i, c.y + a.sin() * i),
+                Pos2::new(c.x + a.cos() * o, c.y + a.sin() * o),
+                1.0,
             );
         }
     }
 
-    /// The box the portrait occupies: centred on the plinth, aspect preserved.
-    fn portrait_rect(&self, rect: Rect) -> Option<Rect> {
-        let art = self.portrait.as_ref()?;
-        let size = art_box(art.size(), rect.size());
-        Some(Rect::from_min_size(
-            Pos2::new(
-                (rect.center().x - size.x * 0.5).round(),
-                (rect.center().y - size.y * 0.5).round(),
-            ),
-            Vec2::new(size.x.round(), size.y.round()),
-        ))
-    }
-
-    /// Re-resolve the portrait slot: it holds the current relic's avatar, and
-    /// reloads when the file changes on disk.
-    fn refresh_art(&mut self, ctx: &egui::Context) {
+    /// Re-resolve the portrait: the current relic's avatar, with its extension
+    /// swapped for `.txt`, looked up under `assets/portraits/`. Reloads when the
+    /// file changes on disk, so Billy can convert an image and watch it land.
+    fn refresh_art(&mut self, _ctx: &egui::Context) {
         let avatar = self
             .relics
             .get(self.relic)
@@ -1902,7 +1918,23 @@ impl App {
             self.portrait = None;
             return;
         }
-        refresh_slot(ctx, &mut self.portrait, &[&avatar], "portrait");
+        let stem = avatar.rsplit_once('.').map(|(s, _)| s).unwrap_or(&avatar);
+        let name = format!("portraits/{stem}.txt");
+        let Some(path) = asset_path(&name) else {
+            self.portrait = None;
+            return;
+        };
+        let stamp = file_stamp(&path);
+        let key = path.to_string_lossy().into_owned();
+        if let Some(p) = &self.portrait {
+            if p.path == key && p.stamp == stamp {
+                return;
+            }
+        }
+        self.portrait = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| parse_portrait_grid(&t))
+            .map(|(w, h, pts)| Portrait { path: key, stamp, w, h, pts });
     }
 
     /// The sky the Logalith hangs in, and its motion field. Drawn first, so the
@@ -2975,7 +3007,6 @@ impl eframe::App for App {
             // Sky, then the entity over it — both from one pose, so the
             // field's lensing bends around the shell that actually gets drawn.
             let stage = cell_y.shrink(4.0);
-            self.fit_art(ctx, cell_z.shrink(4.0));
             let sky = ui.painter().with_clip_rect(cell_y.shrink(3.0));
             let pose = self.shell_pose(stage);
             self.draw_starfield(&sky, stage, &pose);
@@ -3420,33 +3451,58 @@ mod tests {
         }
     }
 
-    /// 1-bit art reduces by whole-number ratios only, and never exceeds its box.
-    /// A fractional ratio splits the source's own pixel blocks and the dither then
-    /// breaks them up.
+    /// The portrait grid parser: liberal about which character means ink, because
+    /// image-to-ASCII converters emit all sorts and Billy should not have to match
+    /// a character set.
     #[test]
-    fn art_reduction_uses_whole_number_ratios() {
-        // Billy's Earth: 1000 px of ~10 px blocks into a 201 px cap -> divisor 5.
-        assert_eq!(art_box(Vec2::splat(1000.0), Vec2::splat(201.0)), Vec2::splat(200.0));
-
-        for natural in [16.0_f32, 64.0, 333.0, 1000.0] {
-            for cap in [7.0_f32, 33.0, 100.0, 512.0, 4000.0] {
-                let box_ = art_box(Vec2::splat(natural), Vec2::splat(cap));
-                assert!(
-                    box_.x <= cap + 1e-3,
-                    "{natural} into {cap} gave {} — over the cap",
-                    box_.x
-                );
-                let ratio = if box_.x >= natural {
-                    box_.x / natural
-                } else {
-                    natural / box_.x
-                };
-                assert!(
-                    (ratio - ratio.round()).abs() < 1e-4,
-                    "{natural} into {cap} gave ratio {ratio}, not a whole number"
-                );
-            }
+    fn portrait_grid_parses_any_converters_output() {
+        for grid in [
+            "..##..\n.####.\n..##..",
+            "  ##  \n #### \n  ##  ",
+            "@@**@@\n@****@\n@@**@@",
+            "0011000011110000",
+        ] {
+            assert!(parse_portrait_grid(grid).is_some(), "failed to parse {grid:?}");
         }
+        let (w, h, pts) = parse_portrait_grid("..##..\n.####.\n..##..").unwrap();
+        assert_eq!((w, h), (6, 3));
+        assert_eq!(pts.len(), 2 + 4 + 2);
+        // `#` is ink, so comments are `//` — the commonest ink character cannot
+        // also be the comment marker.
+        let (_, h2, _) = parse_portrait_grid("// a face\n..##..\n.####.").unwrap();
+        assert_eq!(h2, 2, "the comment line was counted as a pixel row");
+        // Blank padding is trimmed, so a converter's margin doesn't shrink the art.
+        let (_, h3, _) = parse_portrait_grid("\n\n..##..\n\n\n").unwrap();
+        assert_eq!(h3, 1);
+        // Ragged rows are fine: width is the longest.
+        assert_eq!(parse_portrait_grid("#\n####\n##").unwrap().0, 4);
+    }
+
+    /// Nothing empty, blank or oversized gets through. The cloud is redrawn every
+    /// frame, so grid size is a per-frame cost.
+    #[test]
+    fn portrait_grid_rejects_what_it_cannot_draw() {
+        assert!(parse_portrait_grid("").is_none(), "empty");
+        assert!(parse_portrait_grid("....\n....").is_none(), "no ink");
+        assert!(parse_portrait_grid("// only a comment").is_none());
+        assert!(
+            parse_portrait_grid(&"#".repeat(PORTRAIT_MAX_W + 1)).is_none(),
+            "over max width"
+        );
+        let tall = vec!["#"; PORTRAIT_MAX_H + 1].join("\n");
+        assert!(parse_portrait_grid(&tall).is_none(), "over max height");
+        assert!(
+            parse_portrait_grid(&"#".repeat(PORTRAIT_MAX_W)).is_some(),
+            "rejected the max width"
+        );
+    }
+
+    /// A BOM and CRLF are both stripped — the two ways Windows has already broken a
+    /// content file in this project.
+    #[test]
+    fn portrait_grid_survives_windows() {
+        let (w, h, _) = parse_portrait_grid("\u{feff}..##..\r\n.####.\r\n").unwrap();
+        assert_eq!((w, h), (6, 2), "BOM or CRLF leaked into the grid");
     }
 
     /// The shipped relic log parses, and its shape is what the voice code assumes:
@@ -3596,12 +3652,4 @@ mod tests {
         assert!(rarity_weight("") > 0);
     }
 
-    /// Aspect is preserved for non-square art, so a portrait is not stretched to
-    /// fill its plinth.
-    #[test]
-    fn art_reduction_preserves_aspect() {
-        let box_ = art_box(Vec2::new(300.0, 600.0), Vec2::new(200.0, 200.0));
-        assert!((box_.y / box_.x - 2.0).abs() < 1e-4, "aspect drifted: {box_:?}");
-        assert!(box_.x <= 200.0 + 1e-3 && box_.y <= 200.0 + 1e-3);
-    }
 }

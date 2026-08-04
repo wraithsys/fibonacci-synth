@@ -14,8 +14,7 @@ cpal = "0.15"
 midir = "0.10"
 rtrb = "0.3"
 eframe = "0.29"
-# PNG only: the portrait plinth loads 1-bit art from the assets. Already in
-# the lock file via eframe, so this costs no new compilation.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# No image decoding: portraits are dithered *text grids* drawn as animated point
+# clouds, so the `image` crate and its dependency tree are gone again.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

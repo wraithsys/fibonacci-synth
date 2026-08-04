@@ -1251,7 +1251,6 @@ dependencies = [
  "cpal",
  "eframe",
  "fibonacci-dsp",
- "image",
  "midir",
  "rtrb",
  "serde",

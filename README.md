@@ -741,8 +741,27 @@ Panels:
   The entity speaks in **inverted type** — white box, black text. In strict 1-bit
   that is the whole available vocabulary for "this is not a person talking", and it
   is the same inversion the panel headers use, so it reads as the interface itself
-  seizing the channel. The plinth holds the current speaker's `avatar`, reloaded the
+  seizing the channel. The plinth holds the current speaker's portrait, reloaded the
   moment the speaker changes.
+- **The portraits** (`assets/portraits/*.txt`): the plinth draws a **point cloud**,
+  not an image. Each portrait is a dithered 1-bit grid stored as text — space, `.`
+  and `0` empty, anything else ink, `//` for comments — and every inked cell becomes
+  a point. 64×80 is the working size and 96×120 the cap, because the cloud is
+  redrawn every frame: 64×80 lands ≈2,150 points, the same order as the shell's
+  stroke count.
+
+  Text rather than PNG **because points animate and rasters don't** — a raster can
+  only be moved as a block in whole pixels, while every point here moves
+  independently. Three motions: each point breathes on a phase hashed from its own
+  position, so the cloud shimmers like a printout being read rather than sliding as
+  one sheet; a scan band crosses every 7 s, nudging the points it passes; and the
+  whole cloud scatters outward with **agitation**, so the record is disturbed by the
+  thing it is a record of. Empty cells leave the scanline field showing through,
+  which is what makes a figure stand on stripes.
+
+  Eleven of them, listed with filenames in `assets/portraits/README.md`; the
+  Aseprite exporter and workflow are in `tools/aseprite/`. A missing file shows a
+  turning shell mark instead, so they can be done in any order.
 
   Voice ordering is the **one piece of nondeterminism in the program** — its PRNG is
   seeded from the clock at startup, so the log does not recite itself in the same
