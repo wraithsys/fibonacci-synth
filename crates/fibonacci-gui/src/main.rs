@@ -768,25 +768,6 @@ fn scan_presets() -> Vec<String> {
     names
 }
 
-/// Load a blank-line-separated text-box file from the assets. Used for
-/// `voice.txt` and the state-conditional pools (`integrity_low.txt`).
-fn load_lines(base: &str) -> Vec<String> {
-    for prefix in ["crates/fibonacci-gui/assets/", "assets/"] {
-        if let Ok(text) = std::fs::read_to_string(format!("{prefix}{base}")) {
-            // Windows editors save CRLF; a CRLF blank line ("\r\n\r\n")
-            // never matches a "\n\n" split and silently empties the pool.
-            let text = text.replace('\r', "");
-            return text
-                .split("\n\n")
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && !s.starts_with('#'))
-                .map(String::from)
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
 /// The discouragement bands (DESIGN.md): purely presentational, with
 /// hysteresis so states don't flicker at the threshold. Low enters below
 /// 47.5% and exits above 52.5%; Critical enters below 12.5% and exits
@@ -899,21 +880,153 @@ impl BitArt {
 }
 
 /// Candidate portrait files for a dread band, most specific first.
-fn portrait_candidates(dread: Dread) -> &'static [&'static str] {
-    match dread {
-        Dread::Critical => &["portrait_critical.png", "portrait_low.png", "portrait.png"],
-        Dread::Low => &["portrait_low.png", "portrait.png"],
-        Dread::Normal => &["portrait.png"],
+// ── The relic log ──────────────────────────────────────────────────────────
+// `assets/relic_log.json` (Billy's, 2026-08-04): 30 entries, every id a
+// Fibonacci number, 18 archetypes sharing 11 avatars. 21 are human logs, 8 are
+// pure Logalith intrusions, and one — MycelliAI — is a human log the entity
+// breaks into. It replaces voice.txt and both integrity pools outright.
+/// Selection weights by rarity, Fibonacci themselves: a common entry comes up
+/// eight times as often as a very rare one.
+/// Odds that the next box is the entity rather than a witness, given how agitated
+/// it is. Clamped below 1 so a human log is never impossible.
+fn intrude_chance(agitation: f32) -> f32 {
+    (DECAY_INTRUDE_CHANCE + agitation.clamp(0.0, 1.0) * AGITATE_INTRUDE_CHANCE).min(0.95)
+}
+
+fn rarity_weight(rarity: &str) -> u32 {
+    match rarity {
+        "common" => 8,
+        "uncommon" => 5,
+        "rare" => 3,
+        _ => 1, // very_rare, and anything unrecognised
     }
 }
 
-/// Resolve an asset name to a readable path, workspace layout or shipped
-/// layout — same search order as the text assets.
+/// How agitated the entity is, 0..1 — an accumulation, not a threshold.
+///
+/// Dread is instantaneous: it reads `max(rip, haunt)` and drives the visuals.
+/// Agitation is the *history* of that, and it drives the voice. It fills while
+/// the player subverts and drains when they relent, which is DESIGN.md's
+/// forgiveness rule made mechanical — the instrument never holds a grudge, so
+/// pushing it again is always a fresh choice. Rising over ~20 s and draining
+/// over ~45 s means sustained provocation is what earns an interruption, not a
+/// slider flick.
+const AGITATE_RISE_S: f32 = 20.0;
+const AGITATE_FALL_S: f32 = 45.0;
+/// The chance a box is an intrusion: a standing floor from the interface's own
+/// decay — independent of anything the player has done, which is what suggests how
+/// long this thing has been sitting here (Billy) — plus the entity's accumulated
+/// agitation on top. 8 % at rest, 78 % when fully provoked.
+///
+/// A *probability*, not a threshold. A threshold with a discharge was the first
+/// design and it could not work at this cadence: agitation refills from a spend in
+/// about 4 seconds while a box lasts nearer 60, so the charge was always repaid
+/// before the next box and the discharge gated nothing at all. Scaling the odds
+/// instead behaves correctly at every level, and it leaves a human log always
+/// possible — the entity dominating the channel is never quite the same as it
+/// owning it.
+const DECAY_INTRUDE_CHANCE: f32 = 0.08;
+const AGITATE_INTRUDE_CHANCE: f32 = 0.70;
+/// Above this, a relic carrying both a log and an intrusion has the log cut short
+/// by its own intrusion.
+const AGITATE_INTERRUPT: f32 = 0.45;
+
+/// Parsed but not yet displayed: Billy is sending a screenshot of where the
+/// metadata should sit on the box. Kept read so a malformed field is caught at
+/// load rather than at the moment it is first shown.
+#[allow(dead_code)]
+#[derive(Clone, serde::Deserialize)]
+struct RelicMeta {
+    #[serde(default)]
+    tstamp: String,
+    #[serde(default)]
+    alias: String,
+    #[serde(default)]
+    extra: String,
+}
+
+/// `id`, `archetype`, `era` and `metadata` are read from the file but not yet
+/// shown — they are what the pending metadata strip will display.
+#[allow(dead_code)]
+#[derive(Clone, serde::Deserialize)]
+struct Relic {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    archetype: String,
+    #[serde(default)]
+    era: String,
+    #[serde(default)]
+    rarity: String,
+    #[serde(default)]
+    avatar: String,
+    #[serde(default)]
+    metadata: RelicMeta,
+    #[serde(default)]
+    log: Vec<String>,
+    #[serde(default)]
+    intrusion: Vec<String>,
+}
+
+impl Default for RelicMeta {
+    fn default() -> Self {
+        RelicMeta {
+            tstamp: String::new(),
+            alias: String::new(),
+            extra: String::new(),
+        }
+    }
+}
+
+impl Relic {
+    /// An entry with no log is the entity speaking unaccompanied.
+    fn is_pure_intrusion(&self) -> bool {
+        self.log.is_empty() && !self.intrusion.is_empty()
+    }
+}
+
+/// Load the relic log from the assets.
+fn load_relics() -> Vec<Relic> {
+    for path in asset_dirs().into_iter().map(|d| d.join("relic_log.json")) {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            // Strip a UTF-8 byte-order mark. PowerShell writes one by default, and
+            // `serde_json` treats it as a syntax error at line 1 column 1 — so the
+            // whole log parses as nothing and the instrument goes mute with only a
+            // console line to say why, which a windowed binary has nowhere to put.
+            // Same family as the CRLF bug that used to empty the voice pools: text
+            // authored on Windows needs meeting halfway.
+            let text = text.trim_start_matches('\u{feff}');
+            match serde_json::from_str::<Vec<Relic>>(text) {
+                Ok(relics) => return relics,
+                // A malformed file must not silence the instrument; it also must
+                // not be silent about itself.
+                Err(e) => eprintln!("relic_log.json unreadable: {e}"),
+            }
+        }
+    }
+    Vec::new()
+}
+
+
+/// Where assets are looked for, in order: run from the workspace root, run from
+/// beside a shipped binary, then the crate's own source tree.
+///
+/// That last one is `CARGO_MANIFEST_DIR`, baked at compile time. It exists because
+/// the first two are relative to the *working* directory, so the instrument only
+/// found its assets when launched from one particular folder — and `cargo test`
+/// launches from another, which is how this surfaced. In a shipped binary the
+/// path simply won't exist and the entry costs nothing.
+fn asset_dirs() -> [std::path::PathBuf; 3] {
+    [
+        std::path::PathBuf::from("crates/fibonacci-gui/assets"),
+        std::path::PathBuf::from("assets"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"),
+    ]
+}
+
+/// Resolve an asset name to a readable path.
 fn asset_path(base: &str) -> Option<std::path::PathBuf> {
-    ["crates/fibonacci-gui/assets/", "assets/"]
-        .iter()
-        .map(|prefix| std::path::PathBuf::from(format!("{prefix}{base}")))
-        .find(|p| p.is_file())
+    asset_dirs().into_iter().map(|d| d.join(base)).find(|p| p.is_file())
 }
 
 fn file_stamp(path: &std::path::Path) -> Option<SystemTime> {
@@ -1126,15 +1239,22 @@ struct App {
     scope: VecDeque<f32>,
     lissajous: VecDeque<(f32, f32)>,
     log: VecDeque<String>,
-    voice_lines: Vec<String>,
-    /// Billy's low-integrity pool: spoken instead of voice.txt whenever
-    /// LOCAL φ INTEGRITY drops below 50%.
-    low_lines: Vec<String>,
-    /// The critical pool (< 15%), when it has content.
-    crit_lines: Vec<String>,
+    /// Billy's relic log — the only voice source. Replaced voice.txt and both
+    /// integrity pools.
+    relics: Vec<Relic>,
+    /// Index of the relic currently speaking, and whether its human log is being
+    /// cut short by its own intrusion.
+    relic: usize,
+    relic_interrupted: bool,
+    /// The voice's own PRNG. Seeded from the clock at startup — the one piece of
+    /// nondeterminism in the program, so the log does not recite itself in the
+    /// same order every launch. It cannot reach the audio path.
+    voice_rng: u32,
+    /// Accumulated provocation, 0..1. Dread reads the instant; this reads the
+    /// history, and it is what earns an interruption.
+    agitation: f32,
     dread: Dread,
     last_status_log: f64,
-    voice_index: usize,
     voice_last_advance: f64,
     voice_last_reload: f64,
     /// The box currently being typed. Compared against the selected box each
@@ -1171,7 +1291,9 @@ struct App {
     /// so a band change re-resolves the slot immediately instead of waiting
     /// for the next asset poll.
     portrait: Option<BitArt>,
-    portrait_dread: Dread,
+    /// The avatar filename the plinth is currently holding, so a change of
+    /// speaker reloads it immediately instead of waiting for the asset poll.
+    portrait_avatar: String,
     frame_count: u64,
     drone_hz: f32,
     preset_name: String,
@@ -1203,12 +1325,17 @@ impl App {
             scope: VecDeque::with_capacity(1024),
             lissajous: VecDeque::with_capacity(512),
             log: VecDeque::new(),
-            voice_lines: load_lines("voice.txt"),
-            low_lines: load_lines("integrity_low.txt"),
-            crit_lines: load_lines("integrity_critical.txt"),
+            relics: load_relics(),
+            relic: 0,
+            relic_interrupted: false,
+            voice_rng: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() ^ d.as_secs() as u32)
+                .unwrap_or(0x9E37_79B9)
+                | 1,
+            agitation: 0.0,
             dread: Dread::Normal,
             last_status_log: 0.0,
-            voice_index: 0,
             voice_last_advance: 0.0,
             voice_last_reload: 0.0,
             voice_typing: String::new(),
@@ -1225,7 +1352,7 @@ impl App {
             dread_level: 0.0,
             index_smooth: shadow.index,
             portrait: None,
-            portrait_dread: Dread::Normal,
+            portrait_avatar: String::new(),
             frame_count: 0,
             drone_hz: state.drone_hz,
             preset_name: String::new(),
@@ -1763,15 +1890,19 @@ impl App {
         ))
     }
 
-    /// Re-resolve the portrait slot: it follows the dread band, and reloads
-    /// when the file changes on disk.
+    /// Re-resolve the portrait slot: it holds the current relic's avatar, and
+    /// reloads when the file changes on disk.
     fn refresh_art(&mut self, ctx: &egui::Context) {
-        refresh_slot(
-            ctx,
-            &mut self.portrait,
-            portrait_candidates(self.dread),
-            "portrait",
-        );
+        let avatar = self
+            .relics
+            .get(self.relic)
+            .map(|r| r.avatar.clone())
+            .unwrap_or_default();
+        if avatar.is_empty() {
+            self.portrait = None;
+            return;
+        }
+        refresh_slot(ctx, &mut self.portrait, &[&avatar], "portrait");
     }
 
     /// The sky the Logalith hangs in, and its motion field. Drawn first, so the
@@ -2197,26 +2328,122 @@ impl App {
         base * (jitter + hold)
     }
 
-    /// Which pool speaks right now: the dread band picks it, falling back
-    /// gracefully while Billy's pools are unwritten.
-    fn active_pool(&self) -> &Vec<String> {
-        match self.dread {
-            Dread::Critical if !self.crit_lines.is_empty() => &self.crit_lines,
-            Dread::Critical | Dread::Low if !self.low_lines.is_empty() => &self.low_lines,
-            _ => &self.voice_lines,
+    /// One step of the voice's own PRNG. Deterministic within a session but
+    /// seeded from the clock at startup, so the log does not recite itself in the
+    /// same order every launch. This is the *only* nondeterminism in the program
+    /// and it cannot reach the audio path — the engine's bit-identical contract
+    /// is untouched.
+    fn roll(&mut self) -> u32 {
+        let mut x = self.voice_rng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.voice_rng = x;
+        x
+    }
+
+    /// Choose the next thing to speak.
+    ///
+    /// Two sources of interruption, per Billy. **Provoked**: once agitation
+    /// crosses `AGITATE_INTRUDE` the entity speaks for itself, and doing so
+    /// spends part of the charge. **Decay**: a small standing chance of an
+    /// intrusion regardless, because the interface itself is failing — which is
+    /// what implies how long this thing has been sitting here. Otherwise a human
+    /// log, weighted by rarity.
+    fn pick_relic(&mut self) {
+        if self.relics.is_empty() {
+            return;
         }
+        let chance = intrude_chance(self.agitation);
+        let want_intrusion = (self.roll() % 1000) as f32 / 1000.0 < chance;
+
+        let pool: Vec<usize> = self
+            .relics
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                if want_intrusion {
+                    r.is_pure_intrusion()
+                } else {
+                    !r.log.is_empty()
+                }
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let pool = if pool.is_empty() {
+            (0..self.relics.len()).collect::<Vec<_>>()
+        } else {
+            pool
+        };
+
+        // Rarity-weighted draw. Intrusions are all very_rare, so among
+        // themselves the weighting is flat and this reduces to a fair pick.
+        let total: u32 = pool
+            .iter()
+            .map(|&i| rarity_weight(&self.relics[i].rarity))
+            .sum();
+        let mut ticket = self.roll() % total.max(1);
+        let mut chosen = pool[0];
+        for &i in &pool {
+            let w = rarity_weight(&self.relics[i].rarity);
+            if ticket < w {
+                chosen = i;
+                break;
+            }
+            ticket -= w;
+        }
+        // Don't repeat the entry that just spoke if there is any alternative.
+        if chosen == self.relic && pool.len() > 1 {
+            let alt = pool[(self.roll() as usize) % pool.len()];
+            if alt != chosen {
+                chosen = alt;
+            }
+        }
+        self.relic = chosen;
+        // A relic carrying both — MycelliAI — has its log cut short by its own
+        // intrusion, but only when the entity is already agitated.
+        self.relic_interrupted = self.agitation >= AGITATE_INTERRUPT
+            && !self.relics[chosen].intrusion.is_empty()
+            && !self.relics[chosen].log.is_empty();
+    }
+
+    /// The text the current relic is saying, and whether the entity is the one
+    /// saying it. An interrupted log is truncated mid-thought and the intrusion
+    /// lands on top of it.
+    fn voice_text(&self) -> (String, bool) {
+        let Some(r) = self.relics.get(self.relic) else {
+            return (String::new(), false);
+        };
+        if r.is_pure_intrusion() {
+            return (r.intrusion.join("\n"), true);
+        }
+        if self.relic_interrupted {
+            let keep = (r.log.len() / 2).max(1);
+            let mut lines: Vec<String> = r.log[..keep].to_vec();
+            // Cut the last surviving line off mid-sentence: the entity does not
+            // wait for a full stop.
+            if let Some(last) = lines.last_mut() {
+                let cut = (last.chars().count() * 2 / 3).max(8);
+                *last = last.chars().take(cut).collect::<String>() + "—";
+            }
+            lines.extend(r.intrusion.iter().cloned());
+            return (lines.join("\n"), true);
+        }
+        (r.log.join("\n"), false)
     }
 
     /// The voice cell: the box types itself out, then holds. Clicking skips a
     /// reveal in progress, or advances to the next box once it has finished.
     fn draw_voice(&mut self, ui: &mut egui::Ui, now: f64, dt: f32) {
-        let pool = self.active_pool();
-        if pool.is_empty() {
+        if self.relics.is_empty() {
             return;
         }
-        let selected = pool[self.voice_index % pool.len()].clone();
-        // Any change of box — advance, pool switch, or Billy editing the file
-        // under us — restarts the reveal from the first character.
+        let (selected, is_intrusion) = self.voice_text();
+        if selected.is_empty() {
+            return;
+        }
+        // Any change of box — advance, or Billy editing the file under us —
+        // restarts the reveal from the first character.
         if selected != self.voice_typing {
             self.voice_typing = selected;
             self.voice_revealed = 0;
@@ -2236,7 +2463,7 @@ impl App {
         let complete = self.voice_revealed >= chars.len();
         if complete && now - self.voice_last_advance > 45.0 {
             self.voice_last_advance = now;
-            self.voice_index = self.voice_index.wrapping_add(1);
+            self.pick_relic();
         } else if !complete {
             // The hold timer starts when the last character lands, not when
             // the box was selected — a long paragraph gets its full 45 s.
@@ -2245,14 +2472,24 @@ impl App {
         let visible: String = chars[..self.voice_revealed].iter().collect();
         // The whole cell is the click target, not just the glyphs.
         let resp = ui.interact(ui.max_rect(), ui.id().with("voice-box"), Sense::click());
-        ui.label(egui::RichText::new(visible).color(WHITE));
+        // The entity speaks in inverted type. In strict 1-bit that is the whole
+        // available vocabulary for "this is not a person talking", and it is the
+        // same inversion the panel headers use, so it reads as the interface
+        // itself seizing the channel.
+        if is_intrusion {
+            let rect = ui.max_rect();
+            ui.painter().rect_filled(rect, Rounding::ZERO, WHITE);
+            ui.label(egui::RichText::new(visible).color(BLACK));
+        } else {
+            ui.label(egui::RichText::new(visible).color(WHITE));
+        }
         if resp.clicked() {
             // A click always *generates*: the next box, typed from zero. The
             // old behaviour skipped an in-progress reveal to its end, which
             // hid the single thing this box exists to do — and since a box
             // takes 9–11 s to type and then holds 45 s, skipping meant Billy
             // never once saw it happen (2026-08-04).
-            self.voice_index = self.voice_index.wrapping_add(1);
+            self.pick_relic();
             self.voice_last_advance = now;
         }
     }
@@ -2323,17 +2560,36 @@ impl eframe::App for App {
         let kd = 1.0 - (-dt / DREAD_SMOOTH_S).exp();
         let target = if self.dread == Dread::Critical { 1.0 } else { 0.0 };
         self.dread_level += (target - self.dread_level) * kd;
-        if self.portrait_dread != self.dread {
-            self.portrait_dread = self.dread;
+        // Agitation: a leaky integral of how far the player is subverting the
+        // law, filling over ~20 s and draining over ~45. Dread is the instant,
+        // this is the history — and it drains when the player relents, which is
+        // the forgiveness rule the design asks for.
+        let subversion = self.shadow.rip.max(self.shadow_verb.haunt).clamp(0.0, 1.0);
+        self.agitation = (self.agitation
+            + dt * (subversion / AGITATE_RISE_S - self.agitation / AGITATE_FALL_S))
+            .clamp(0.0, 1.0);
+        // A change of speaker reloads the plinth at once, rather than waiting for
+        // the asset poll.
+        let avatar = self
+            .relics
+            .get(self.relic)
+            .map(|r| r.avatar.clone())
+            .unwrap_or_default();
+        if avatar != self.portrait_avatar {
+            self.portrait_avatar = avatar;
             self.refresh_art(ctx);
         }
 
-        // Hot-reload Billy's voice file every ~2 s, and Space Z's art with it.
+        // Hot-reload Billy's relic log every ~2 s, and Space Z's art with it.
         if now - self.voice_last_reload > 2.0 {
             self.voice_last_reload = now;
-            self.voice_lines = load_lines("voice.txt");
-            self.low_lines = load_lines("integrity_low.txt");
-            self.crit_lines = load_lines("integrity_critical.txt");
+            let relics = load_relics();
+            if !relics.is_empty() {
+                if relics.len() != self.relics.len() {
+                    self.relic = self.relic.min(relics.len() - 1);
+                }
+                self.relics = relics;
+            }
             self.refresh_art(ctx);
         }
 
@@ -3191,6 +3447,153 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The shipped relic log parses, and its shape is what the voice code assumes:
+    /// every id a Fibonacci number, every entry carrying something to say, every
+    /// entry naming an avatar, and both intrusion kinds present.
+    #[test]
+    fn the_relic_log_parses_and_holds_its_shape() {
+        let relics = load_relics();
+        assert!(
+            !relics.is_empty(),
+            "relic_log.json did not load — the instrument would be mute"
+        );
+
+        let mut fib = vec![1u64, 1];
+        while *fib.last().unwrap() < 10_000_000_000 {
+            let n = fib[fib.len() - 1] + fib[fib.len() - 2];
+            fib.push(n);
+        }
+        for r in &relics {
+            let id: u64 = r
+                .id
+                .parse()
+                .unwrap_or_else(|_| panic!("id {:?} is not a number", r.id));
+            assert!(fib.contains(&id), "id {id} is not a Fibonacci number");
+            assert!(
+                !r.log.is_empty() || !r.intrusion.is_empty(),
+                "relic {id} has nothing to say"
+            );
+            assert!(!r.avatar.is_empty(), "relic {id} names no avatar");
+            assert!(
+                r.avatar.ends_with(".png"),
+                "relic {}'s avatar {:?} is not a png",
+                id,
+                r.avatar
+            );
+            assert!(
+                rarity_weight(&r.rarity) > 0,
+                "relic {id} has an unusable rarity"
+            );
+        }
+        // Both interruption sources need something to draw from.
+        assert!(
+            relics.iter().any(|r| r.is_pure_intrusion()),
+            "no pure intrusions — the entity could never speak for itself"
+        );
+        assert!(
+            relics.iter().any(|r| !r.log.is_empty()),
+            "no human logs — there would be nothing to interrupt"
+        );
+    }
+
+    /// Agitation fills under sustained subversion, drains when the player relents,
+    /// and reaches the interrupt threshold in a plausible time. This is the
+    /// forgiveness rule as arithmetic: it must not latch.
+    #[test]
+    fn agitation_fills_then_forgives() {
+        let step = |a: f32, subversion: f32, dt: f32| {
+            (a + dt * (subversion / AGITATE_RISE_S - a / AGITATE_FALL_S)).clamp(0.0, 1.0)
+        };
+        // Full subversion, held: reaches the interrupt level, and in a window a
+        // player would connect to their own action.
+        let mut a = 0.0f32;
+        let mut secs = 0.0f32;
+        while a < AGITATE_INTERRUPT && secs < 600.0 {
+            a = step(a, 1.0, 0.05);
+            secs += 0.05;
+        }
+        assert!(
+            a >= AGITATE_INTERRUPT,
+            "sustained subversion never provokes the entity"
+        );
+        assert!(
+            (5.0..180.0).contains(&secs),
+            "provocation took {secs:.0}s — outside anything a player would connect \
+             to their own action"
+        );
+        // Relenting drains it back down, and keeps going to rest.
+        let mut b = a;
+        let mut relent = 0.0f32;
+        while b > AGITATE_INTERRUPT * 0.5 && relent < 600.0 {
+            b = step(b, 0.0, 0.05);
+            relent += 0.05;
+        }
+        assert!(
+            b <= AGITATE_INTERRUPT * 0.5,
+            "agitation latches — it must forgive"
+        );
+        for _ in 0..20_000 {
+            b = step(b, 0.0, 0.05);
+        }
+        assert!(b < 0.01, "agitation never returns to rest, settling at {b}");
+        // No subversion, no provocation, ever.
+        let mut c = 0.0f32;
+        for _ in 0..20_000 {
+            c = step(c, 0.0, 0.05);
+        }
+        assert!(c < 1e-6, "the entity gets provoked by nothing at all");
+    }
+
+    /// The intrusion odds rise with agitation, start at the decay floor, and never
+    /// reach certainty — a witness must always be able to get a word in.
+    ///
+    /// This replaced a threshold-and-discharge design that a test killed: agitation
+    /// refills from a discharge in ~4 s while a box lasts ~60, so the discharge was
+    /// always repaid before the next box and gated nothing whatsoever.
+    #[test]
+    fn intrusion_odds_rise_with_agitation_but_never_certain() {
+        assert!(
+            (intrude_chance(0.0) - DECAY_INTRUDE_CHANCE).abs() < 1e-6,
+            "at rest the only intrusions should be the interface's own decay"
+        );
+        assert!(
+            intrude_chance(0.0) > 0.0,
+            "decay intrusions must happen unprompted, or the entity only ever \
+             appears as punishment"
+        );
+        assert!(
+            intrude_chance(1.0) < 1.0,
+            "fully provoked must still leave room for a human log"
+        );
+        assert!(intrude_chance(1.0) > 0.5, "full provocation should dominate the channel");
+        let mut prev = -1.0;
+        for i in 0..=20 {
+            let c = intrude_chance(i as f32 / 20.0);
+            assert!(c > prev, "odds must rise monotonically");
+            prev = c;
+        }
+        // Out of range is clamped, not extrapolated past certainty.
+        assert!(intrude_chance(9.0) < 1.0);
+        assert!((intrude_chance(-1.0) - DECAY_INTRUDE_CHANCE).abs() < 1e-6);
+    }
+
+    /// Rarity weights are Fibonacci and strictly ordered, so a common entry really
+    /// is commoner than a rare one.
+    #[test]
+    fn rarity_weights_are_ordered_fibonacci() {
+        let (c, u, r, v) = (
+            rarity_weight("common"),
+            rarity_weight("uncommon"),
+            rarity_weight("rare"),
+            rarity_weight("very_rare"),
+        );
+        assert!(c > u && u > r && r > v && v > 0);
+        assert_eq!([c, u, r, v], [8, 5, 3, 1]);
+        // An unknown rarity must fall back to something usable, not zero.
+        assert!(rarity_weight("legendary") > 0);
+        assert!(rarity_weight("") > 0);
     }
 
     /// Aspect is preserved for non-square art, so a portrait is not stretched to

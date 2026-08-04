@@ -712,10 +712,48 @@ Panels:
   mathematical models above. Whatever height is left below it is a fixed
   low-density dither field, which carries no measurement and must not be read
   as one.
-- **The voice** (bottom right; `crates/fibonacci-gui/assets/voice.txt`): all
-  *voiced* text is data, not code — one text box per blank-line-separated
-  paragraph, `#`-paragraphs ignored, hot-reloaded every ~2 s while running.
-  The file ships empty; its author is Billy.
+- **The relic log** (bottom right; `crates/fibonacci-gui/assets/relic_log.json`):
+  all *voiced* text is data, not code, and it is Billy's. 30 entries, **every id a
+  Fibonacci number** (1 → 1,346,269 = F(31)), 18 archetypes sharing 11 avatars.
+  21 are human logs, 8 are Logalith intrusions, and one is a human log the entity
+  breaks into. Hot-reloaded every ~2 s. It replaced `voice.txt` and both integrity
+  pools.
+
+  **Who speaks** is two mechanisms. A standing 8 % chance of a *decay* intrusion,
+  independent of anything the player has done — the interface itself failing, which
+  is what implies how long this thing has been sitting here. Plus **agitation**: a
+  leaky integral of `max(rip, haunt)`, filling over ~20 s and draining over ~45,
+  which lifts the intrusion odds to 78 % when full. Human logs are drawn
+  rarity-weighted at Fibonacci weights — common 8, uncommon 5, rare 3, very rare 1.
+
+  Agitation is deliberately *not* the dread band. Dread reads the instant and drives
+  the visuals; agitation reads the history and drives the voice. It drains when the
+  player relents, which is DESIGN.md's forgiveness rule made mechanical — the
+  instrument never holds a grudge, so pushing it again is always a fresh choice.
+  Above 0.45, a relic carrying both a log and an intrusion has the log **cut off
+  mid-sentence** by it.
+
+  Those are odds, not a threshold. A threshold with a discharge was the first design
+  and a test killed it: agitation refills from a discharge in about 4 s while a box
+  lasts nearer 60, so the charge was always repaid before the next box and the
+  discharge gated nothing at all.
+
+  The entity speaks in **inverted type** — white box, black text. In strict 1-bit
+  that is the whole available vocabulary for "this is not a person talking", and it
+  is the same inversion the panel headers use, so it reads as the interface itself
+  seizing the channel. The plinth holds the current speaker's `avatar`, reloaded the
+  moment the speaker changes.
+
+  Voice ordering is the **one piece of nondeterminism in the program** — its PRNG is
+  seeded from the clock at startup, so the log does not recite itself in the same
+  order every launch. It cannot reach the audio path; the engine's bit-identical
+  contract is untouched.
+
+  A leading UTF-8 byte-order mark is stripped before parsing. PowerShell writes one
+  by default and `serde_json` treats it as a syntax error at line 1 column 1, so the
+  whole log would parse as nothing and the instrument would go mute with only a
+  console line to say why — which a windowed binary has nowhere to put. Same family
+  as the CRLF bug that used to empty the voice pools.
 
   The box **types itself out** at 30 characters per second, humanised two
   ways: each character's dwell is jittered ±40 % by a hash of its index, and
@@ -738,4 +776,4 @@ Panels:
    scopes, event log, data-driven voice~~ ← you are here
    (design pass in progress — see DESIGN.md)
 4. Preset save/load; algorithm roster growth to 8 (then 13); WASAPI
-   exclusive mode / ASIO if latency demands it; voice.txt content (Billy)
+   exclusive mode / ASIO if latency demands it; the 11 avatar PNGs (Billy)

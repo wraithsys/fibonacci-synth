@@ -64,6 +64,40 @@ the dread band (the cadence idea, extended from the log's report interval to
 its speed) — deliberately not built yet, since nothing should move in the
 discouragement system without Billy's eyes on it.
 
+## The relic log (Billy, 2026-08-04)
+
+`assets/relic_log.json` replaced `voice.txt` and both integrity pools. 30 entries,
+every id a Fibonacci number, 18 archetypes over 11 avatars, and the crucial
+structure: **21 human logs, 8 Logalith intrusions, 1 log the entity breaks into.**
+That split lands on the discouragement design without being asked to — witnesses
+speak while the law holds, the entity speaks when it doesn't.
+
+Billy's calls: portrait framing, dread-driven *and* random selection, replace all
+three text files. Metadata placement is pending a screenshot from him.
+
+**Agitation** is the mechanic he asked me to design. It is a leaky integral of
+`max(rip, haunt)` — deliberately not the dread band, because dread reads the
+instant and drives the visuals while this reads the history and drives the voice.
+It drains when the player relents, which makes the forgiveness rule mechanical
+rather than aspirational. Two interruption sources, per his instruction: provoked
+(agitation raising the odds) and ambient decay (a standing 8 %, saying the
+interface itself is old).
+
+Two design corrections that came out of writing tests for it, both worth keeping
+on record:
+
+- **A threshold with a discharge cannot work at this cadence.** The first design
+  had agitation cross a line, interrupt, and spend part of its charge. Agitation
+  refills from a spend in ~4 s; a box lasts ~60. The spend was always repaid before
+  it could gate anything. It is a probability curve now.
+- **The log was silently unparseable.** PowerShell wrote the JSON with a UTF-8 BOM,
+  which `serde_json` rejects outright — so the instrument would have shipped mute,
+  reporting the reason to a console a windowed binary does not have. Stripped now.
+  Text authored on Windows needs meeting halfway; this is the second time (CRLF was
+  the first).
+
+Still open: the 11 avatar PNGs, and where the metadata sits.
+
 ## The mythology, and what the Logalith's panel is (Billy, 2026-08-04)
 
 > "the fibonacci shell is a space entity using it's ability to emit resonant
