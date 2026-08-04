@@ -24,3 +24,7 @@ serde_json = "1"
 # no images at runtime.
 [dev-dependencies]
 png = "0.18"
+# `font_probe` reads each candidate face's embedded licence metadata and checks it
+# actually carries the glyphs this instrument uses. Already in the lock via
+# ab_glyph, so it costs no new compilation, and a dev-dependency never ships.
+ttf-parser = "0.25"

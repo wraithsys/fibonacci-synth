@@ -106,27 +106,65 @@ zone"), W the voice. Both cuts golden. 59 tests green.
 Space Z's rethink; **the font conflict — blocks any public release**;
 1-bit icon/sigil; starter-preset bank; roster-to-8.
 
-**Fonts, the live blocker.** Xilla has no license and is in git history
-since `0419ee7`, so a swap at tag time will not clear it. Billy pointed at
-dafont's bitmap listing filtered to Public domain / GPL / OFL
-(`bitmap.php?fpp=200&af=on&l[]=10`) — all 147 results are safe to ship.
-Shortlist agreed but **not yet downloaded**: `Pixel Operator` for UI,
-`Unifont Ex Mono` as fallback *and* the entity's voice (it is the only one
-certain to carry φ Δ π • ◦ ¤ and the subscripts), then nine archetype
-faces — Modern DOS, PixAntiqua, European Teletext, Pixeloid Sans/Mono,
-Enter Command, VHS/VCR OSD, Scriptorium, Minitel, Cyborg Sister. **The
-gate: no font enters `assets/` without its license file beside it** —
-precisely the check Xilla failed. Multi-font plumbing is not built yet.
+**Fonts — files are IN, plumbing is NOT.** Twelve faces sit in
+`assets/fonts/<slug>/`, each with its `LICENSE.txt`, roster and credits in
+`assets/fonts/NOTICE.md`. **Nothing loads them yet** — `install_font` still
+loads the single `assets/font.otf` (Xilla). That is the next job: a
+multi-font system with named roles, the archetype mapping from NOTICE.md,
+and Unifont as the fallback family so gaps resolve cleanly.
+
+What the vetting found, because it matters for any future asset:
+- dafont's "Public domain / GPL / OFL" filter is a **self-declaration**.
+  dafont holds no document and verifies nothing, and the three-licence
+  bundle isn't actionable anyway — OFL *requires* you ship its text, so
+  "one of these three" cannot be complied with.
+- 7 of 12 shipped a licence file; 3 more declared it in the font's own
+  `name` table (ids 13/14) with no file; 4 had nothing at all. Three of
+  those four were jeti/fontenddev.com, whose About page states CC BY 4.0 —
+  quoted and dated inside each `LICENSE.txt`, since that page is the only
+  record. `Minitel` had nothing anywhere and was rejected. `vhs-vcr-osd`
+  was CC BY-SA 3.0 and was dropped: Share-Alike in a shipped binary is a
+  lawyer's question.
+- **`examples/font_probe.rs`** reports embedded licence + glyph coverage
+  for any font. Run it before proposing a face, not after.
+- Only **Unifont Ex Mono** and **Better VCR** have complete coverage of
+  φ ρ π Δ • ◦ ¤ and the subscripts. Pixel Operator does not, which is why
+  it lost the UI role to Pixeloid Mono. Unifont is 13.7 MB — earns its
+  place as the fallback, but subsetting is an option nobody has built.
+- Four fonts are CC BY 4.0 and **must** be credited. NOTICE.md carries both
+  the minimum wording and Billy's requested over-the-top version (credits
+  typeset in the fonts they credit).
+
+Xilla itself is untouched: still `assets/font.otf`, still in history since
+`0419ee7`, still the release blocker. Billy's call is **rewrite history with
+git-filter-repo once the swap lands**, in one pass, with him watching.
 
 **Engineering next**:
-1. Fonts (above) — architecture plus the archetype/role mapping.
-2. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
+1. **Multi-font plumbing** — roles, archetype mapping, Unifont fallback.
+   Then delete `font.otf` and schedule the history rewrite.
+2. **Space Z = the record's header** (Billy's pick): archetype, era,
+   tstamp, alias, extra, id — the found-document furniture, beside the log
+   text in W. Zone is 574×412, aspect 1.39; the app logs its own figure.
+3. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
    pre-delays from Fibonacci milliseconds, zero new controls. Do NOT land
    it without Billy's ears on standby.
-3. Release engineering: public README with demo WAVs (`cargo run --release
+4. Release engineering: public README with demo WAVs (`cargo run --release
    --example render`), v1.0.0 tag, portable Windows build, license,
    distribution decision (Billy's call).
+
+## Asset convention (Billy, 2026-08-04)
+
+- `assets/fonts/<slug>/` — a font plus its `LICENSE.txt`. Nothing else.
+- `assets/pool/` — confirmed, cleared assets. **Does not exist yet.**
+- Anything unconfirmed stays untracked and gets **deleted** once tested,
+  not committed "just in case".
+
+Currently untracked and awaiting that sort: 18 loose `.jpg` sources in
+`assets/`, `earth.png`, 14 converted portrait grids in `assets/portraits/`,
+and `docs/`. All are derivatives of material whose licence is not
+established. They were deliberately left out of every commit — the same
+discipline that makes Xilla a blocker applies to pictures.
 
 ## Traps this session actually hit
 
