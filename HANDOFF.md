@@ -242,6 +242,22 @@ the exe from a foreign cwd (assets/presets are exe-anchored now), and
 zips. Demo renders attach to releases, never the repo. `.cargo/config.toml`
 is untracked machine-local config — the committed form broke every clone.
 
+**The icon exists (2026-08-05, Billy: "that's it").** The Logalith at
+integrity 0%, captured from the real renderer by the new `BYPO_SHOT`
+env tool (`seconds:path` → binary PPM of the window, then exit — also
+your promo-shot tool), composed by `tools/logo_compose.py` into a
+ringed black disc, and wired twice from one art: `icon/icon.ico` into
+the exe resource via build.rs + winresource, `icon_256.rgba` raw into
+the window icon. Capture recipe that matters: **master 0.5**, so the
+shell renders whole at scale 1.0 — anything larger leans into the
+panel clip and wears a flat edge no recrop can heal.
+
+**Pending v1.0.1**: Billy's remaining bank presets are on his laptop
+(the seven shipped are only this machine's); he copies the .json out
+(plain files, safe — though the laptop *repo* must be re-cloned), they
+get tracked with gitignore negation lines, and v1.0.1 ships icon +
+full bank together. v1.0.0 stands as tagged.
+
 **Engineering next**:
 1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
