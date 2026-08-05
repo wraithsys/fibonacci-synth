@@ -731,13 +731,19 @@ Panels:
 - **LOCAL φ INTEGRITY**: a display composite, `100·(1−max(rip, haunt))` —
   the formula is printed next to the meter.
 - **Scopes**: the L/R Lissajous (mid/side rotated) — the phase image itself —
-  sits under the melody parameters in the left panel, circular whatever its
-  box's aspect. The footer's full-width mono waveform is **hidden** as of the
-  2026-08-05 controls sweep ("may be remove if confirmed it looks better
-  without"); its drawing code is parked in place pending that verdict. It is given a
-  reserved share of the panel rather than "whatever height is left": under the
-  presets on leftover height, one app-wide padding change pushed it past the bottom
-  edge and it silently stopped drawing.
+  sits under the melody parameters in the left panel, its beam circular and
+  centred whatever the box's aspect. As the panel's *last* element it owns all
+  the remaining height — clamping it square left a dead band beneath it at
+  full screen (the 2026-08-05 sweep: "center it, let it grow on the Y axis").
+  The old lesson still stands: on leftover height *under* other content, one
+  app-wide padding change once pushed it past the bottom edge and it silently
+  stopped drawing — last-element-plus-guard is the shape that cannot repeat
+  that. The scale bank shares this space, so the SCALE tuning button doubles
+  as a **view toggle**: the first press selects the tuning and shows the bank,
+  a second press flips the bank away and gives the phase image the panel back
+  — it changes nothing but the view. The footer's full-width mono waveform is
+  **hidden** as of the same sweep (drawing code parked pending the
+  looks-better-without verdict).
 - **Event log**: timestamps + measurements only. Every line the program
   authors must be verifiable against the engine or against mathematics;
   anything else is a bug. It rides a **marquee** in the header strip: the six

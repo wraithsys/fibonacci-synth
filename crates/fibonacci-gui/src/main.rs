@@ -1620,6 +1620,11 @@ struct App {
     shadow: Patch,
     shadow_verb: VerbParams,
     shadow_melody: MelodyParams,
+    /// Whether the scale bank is on show. A *view* toggle only (Billy's
+    /// sweep, 2026-08-05): the SCALE button reveals the bank so a scale can
+    /// be chosen, then hides it again so the phase image gets the panel back.
+    /// Never touches the tuning and is deliberately not persisted.
+    scale_picker_open: bool,
     start: Instant,
     // Live visual state, fed by the viz ring.
     env: [f32; NUM_OPS],
@@ -1709,6 +1714,7 @@ impl App {
             shadow,
             shadow_verb,
             shadow_melody: state.melody,
+            scale_picker_open: false,
             start: Instant::now(),
             env: [0.0; NUM_OPS],
             scope: VecDeque::with_capacity(1024),
@@ -3237,6 +3243,8 @@ impl eframe::App for App {
             let m = &mut self.shadow_melody;
             let mut changed = false;
             let mut log_line: Option<String> = None;
+            let mut toggle_picker = false;
+            let mut open_picker = false;
             // The switch and its hold source share a row: the source belongs
             // to the S&H, and on its own line it left a hole (Billy: "move
             // golden and random together theres empty space").
@@ -3285,26 +3293,43 @@ impl eframe::App for App {
                             .color(if active { BLACK } else { WHITE }),
                     )
                     .fill(if active { WHITE } else { BLACK });
-                    if ui.add(b).clicked() && !active {
-                        m.tuning = tuning;
-                        changed = true;
-                        log_line = Some(match tuning {
-                            Tuning::Scale => "tuning: 12-tet scale bank.".into(),
-                            Tuning::FibonacciHz => {
-                                "tuning: fibonacci integers as hz. 987/610 = 1.61803.".into()
+                    if ui.add(b).clicked() {
+                        // A second press on an already-active SCALE flips the
+                        // bank's visibility and nothing else (Billy's sweep:
+                        // "by itself it will do nothing else") — pick a
+                        // scale, toggle the bank away, get the phase back.
+                        if tuning == Tuning::Scale && active {
+                            toggle_picker = true;
+                        } else if !active {
+                            m.tuning = tuning;
+                            changed = true;
+                            if tuning == Tuning::Scale {
+                                open_picker = true;
                             }
-                            Tuning::GoldenPowers => "tuning: root × φ^k, unquantized.".into(),
-                            Tuning::PlasticPowers => {
-                                "tuning: root × ρ^k. step ≈ 486 cents.".into()
-                            }
-                            Tuning::GoldenWalk => {
-                                "tuning: hz ← hz·φ^±1, reflected in range. no grid.".into()
-                            }
-                        });
+                            log_line = Some(match tuning {
+                                Tuning::Scale => "tuning: 12-tet scale bank.".into(),
+                                Tuning::FibonacciHz => {
+                                    "tuning: fibonacci integers as hz. 987/610 = 1.61803.".into()
+                                }
+                                Tuning::GoldenPowers => "tuning: root × φ^k, unquantized.".into(),
+                                Tuning::PlasticPowers => {
+                                    "tuning: root × ρ^k. step ≈ 486 cents.".into()
+                                }
+                                Tuning::GoldenWalk => {
+                                    "tuning: hz ← hz·φ^±1, reflected in range. no grid.".into()
+                                }
+                            });
+                        }
                     }
                 }
             });
-            if m.tuning == Tuning::Scale {
+            if toggle_picker {
+                self.scale_picker_open = !self.scale_picker_open;
+            }
+            if open_picker {
+                self.scale_picker_open = true;
+            }
+            if m.tuning == Tuning::Scale && self.scale_picker_open {
                 ui.horizontal_wrapped(|ui| {
                     for scale in Scale::ALL {
                         let active = m.scale == scale;
@@ -3357,13 +3382,16 @@ impl eframe::App for App {
             // It was under the presets in the right panel, where the app-wide padding
             // pushed it past the bottom edge and it silently stopped drawing — a
             // "draw it in whatever height is left" panel is one layout change away
-            // from having none left. Here it takes a fixed share of the panel and is
-            // *reserved* rather than leftover, so it cannot be squeezed out again.
+            // from having none left. It is the panel's *last* element, so all
+            // remaining height is its by construction — clamping it square left a
+            // dead band under the box at full screen (Billy's sweep, 2026-08-05:
+            // "center it, let it grow on the Y axis"). The beam stays circular and
+            // centered whatever the box's aspect; the graticule fills the box.
             ui.add_space(CELL_GUTTER);
-            let side = ui.available_height().min(ui.available_width()) - 22.0;
-            if side > 40.0 {
+            let h = ui.available_height() - 22.0;
+            if h > 40.0 {
                 Self::inverted_strip(ui, "PHASE");
-                self.draw_phase(ui, side);
+                self.draw_phase(ui, h);
             }
         });
 
