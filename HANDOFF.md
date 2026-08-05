@@ -11,10 +11,12 @@ The commit history narrates the whole build honestly — trust it.
 Fibonacci recursion generates the patch architecture; golden-ratio
 inharmonicity is the identity ("endlessly ghostly, not big and bassy").
 Entity/mascot: **the Logalith** (a chambered-nautilus logarithmic spiral —
-deliberately NOT the golden-spiral myth). Private repo:
-`wraithsys/fibonacci-synth`. Milestones 1–3 plus the full design pass are
-complete; the instrument works, sounds right, and Billy loves it.
-This is also Billy's Rust-over-C++ trial and his first release ambition:
+deliberately NOT the golden-spiral myth). **Public repo**:
+`wraithsys/fibonacci-synth` — **v1.0.0 SHIPPED 2026-08-05**, MIT, portable
+Windows zip + 32 demo renders on the GitHub release. Milestones 1–3, the
+full design pass, the controls sweep and release engineering are all
+complete; the instrument works, sounds right, and Billy loves it. This was
+Billy's Rust-over-C++ trial and his first release ambition, fulfilled:
 "complete it and make it available to people."
 
 Workspace: `fibonacci-dsp` (pure DSP, 34 tests, allocation-free audio
@@ -230,18 +232,24 @@ more (`cultist`, `schism_leader`, `borg_cube_easter_egg`) are characters
 the relic log has never heard of and need entries, which is his text. Full
 status table in `assets/portraits/README.md`. Not a v1 item.
 
+**Release engineering — SHIPPED (2026-08-05).** v1.0.0 is tagged and
+public: MIT (fonts separately licensed, NOTICE.md rides every
+redistribution), roster stays 5 (Billy's call — dormant tree nodes keep
+waiting), the starter bank is his seven presets tracked by explicit
+gitignore negation (new saves stay private; growing the bank = adding a
+negation line on purpose), and `tools/package.ps1 -Smoke` stages, launches
+the exe from a foreign cwd (assets/presets are exe-anchored now), and
+zips. Demo renders attach to releases, never the repo. `.cargo/config.toml`
+is untracked machine-local config — the committed form broke every clone.
+
 **Engineering next**:
 1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
    pre-delays from Fibonacci milliseconds, zero new controls. **Parked by
-   Billy's explicit call (2026-08-05)** — the sweep's decay rework
-   ("do my note now, park recursive Room") is landed and approved; the
-   recursive spec stays a separate future campaign. Do NOT land it
-   without Billy's ears on standby.
-2. Release engineering: public README with demo WAVs (`cargo run --release
-   --example render`), v1.0.0 tag, portable Windows build, license,
-   distribution decision (Billy's call). **If any of that means making the
-   repo public, the history rewrite above happens first.**
+   Billy's explicit call (2026-08-05)**; a future campaign, and a v1.x
+   sound change when it comes. Do NOT land it without Billy's ears on
+   standby.
+2. Post-release: whatever the public surfaces — issues are open now.
 
 ## Asset convention (Billy, 2026-08-04)
 
