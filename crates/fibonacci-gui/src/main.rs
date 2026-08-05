@@ -1545,6 +1545,19 @@ fn exe_dir() -> Option<std::path::PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.to_path_buf())
 }
 
+/// Binary PPM (P6): a three-line header then raw RGB — zero dependencies,
+/// and every image tool reads it. Alpha is dropped; the window has none.
+fn write_ppm(path: &std::path::Path, image: &egui::ColorImage) {
+    let mut out = format!("P6\n{} {}\n255\n", image.width(), image.height()).into_bytes();
+    for px in &image.pixels {
+        out.extend_from_slice(&[px.r(), px.g(), px.b()]);
+    }
+    match std::fs::write(path, out) {
+        Ok(()) => eprintln!("BYPO_SHOT: wrote {}", path.display()),
+        Err(e) => eprintln!("BYPO_SHOT write failed: {e}"),
+    }
+}
+
 /// Resolve an asset name to a readable path.
 fn asset_path(base: &str) -> Option<std::path::PathBuf> {
     asset_dirs().into_iter().map(|d| d.join(base)).find(|p| p.is_file())
@@ -1732,6 +1745,13 @@ struct App {
     /// One text, two duties: it filters the bank live and it names a save.
     preset_name: String,
     preset_names: Vec<String>,
+    /// Dev capture (`BYPO_SHOT=seconds:path`): screenshot the window into a
+    /// binary PPM at `path` once `seconds` of runtime have passed, then
+    /// exit. A capture of the real renderer, not a redrawing — it is how
+    /// the Logalith sat for its v1 icon portrait, and it works for promo
+    /// shots the same way.
+    shot: Option<(f64, std::path::PathBuf)>,
+    shot_requested: bool,
     /// The header pane's visibility. Not persisted.
     presets_open: bool,
     /// The single highlighted preset — at most one, ever.
@@ -1797,6 +1817,13 @@ impl App {
             drone_hz: state.drone_hz,
             preset_name: String::new(),
             preset_names: scan_presets(),
+            shot: std::env::var("BYPO_SHOT").ok().and_then(|s| {
+                // The first colon ends the seconds, so a Windows drive path
+                // after it survives intact.
+                let (secs, path) = s.split_once(':')?;
+                Some((secs.parse().ok()?, std::path::PathBuf::from(path)))
+            }),
+            shot_requested: false,
             presets_open: false,
             preset_selected: None,
             preset_armed: PaneArm::None,
@@ -3381,6 +3408,25 @@ impl eframe::App for App {
             self.refresh_art(ctx);
         }
 
+        // The dev capture: request the frame once the clock says so, write
+        // it the moment it arrives, and leave.
+        if let Some((after, path)) = self.shot.clone() {
+            if now >= after && !self.shot_requested {
+                self.shot_requested = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+            }
+            let taken = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = taken {
+                write_ppm(&path, &image);
+                std::process::exit(0);
+            }
+        }
+
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let t = self.start.elapsed().as_secs();
@@ -4014,6 +4060,15 @@ fn main() -> eframe::Result<()> {
             // control column itself would clip, and a clipped control is a
             // broken control.
             .with_min_inner_size(egui::vec2(800.0, 600.0))
+            // The window icon: the Logalith at integrity 0% — a BYPO_SHOT
+            // capture of the real renderer, composed by tools/logo_compose.py
+            // and embedded as raw RGBA so the binary carries no image
+            // decoder. The exe's own icon is the same art via build.rs.
+            .with_icon(egui::IconData {
+                rgba: include_bytes!("../icon/icon_256.rgba").to_vec(),
+                width: 256,
+                height: 256,
+            })
             .with_title("BLOW YOUR PHASE OFF"),
         ..Default::default()
     };
