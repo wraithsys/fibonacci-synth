@@ -761,6 +761,13 @@ Panels:
   mathematical models above. Whatever height is left below it is a fixed
   low-density dither field, which carries no measurement and must not be read
   as one.
+- **Resize-down priority**: ornament yields before controls, in a fixed
+  order. The bottom row — record card and voice — hides first, when its share
+  of the centerpiece drops under 220 px (the card never changes shape, so a
+  row too short would clip it into a glitch); the Logalith's cell hides
+  second, under 200 px of width, donating its space to the controls; the
+  controls, operators and stats never hide, and the window refuses to shrink
+  under 800×600, the size at which the control column itself would clip.
 - **The relic log** (bottom right; `crates/fibonacci-gui/assets/relic_log.json`):
   all *voiced* text is data, not code, and it is Billy's. 30 entries, **every id a
   Fibonacci number** (1 → 1,346,269 = F(31)), 18 archetypes sharing 11 avatars.

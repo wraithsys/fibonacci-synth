@@ -56,6 +56,16 @@ const CONTROL_COL_MIN: f32 = 320.0;
 /// Gutter between cells, in pixels. Panels stay packed; this is the hairline
 /// of black that keeps two 2 px frames from reading as one 4 px frame.
 const CELL_GUTTER: f32 = 5.0;
+// Resize-down priority (Billy's sweep, 2026-08-05: "create priority list of
+// sections to hide and set minimum"). Ornament yields before controls, in
+// this order: 1. the bottom row — record card and voice — because the card
+// never changes shape and a row too short would clip it into a glitch;
+// 2. the Logalith's cell, once it would be a sliver; 3. nothing else — the
+// controls, operators and stats survive to the window minimum (800×600).
+/// The bottom row hides below this height, its own words' worth of room.
+const BOTTOM_ROW_MIN_H: f32 = 220.0;
+/// The Logalith's cell hides below this width.
+const SHELL_CELL_MIN_W: f32 = 200.0;
 
 // ── The Logalith: a Fibonacci shell, engraved ──────────────────────────────
 // Billy, 2026-08-04, against a watercolour of a flat many-whorled snail shell:
@@ -3548,44 +3558,67 @@ impl eframe::App for App {
                 .min(body.width() * 0.6)
                 .floor();
             let row_h = (body.height() * GOLDEN_MAJOR).floor();
+            // The resize-down priorities (see the constants): the bottom row
+            // yields first, the shell's cell second, the controls never.
+            let show_bottom = body.height() - row_h >= BOTTOM_ROW_MIN_H;
+            let show_shell = body.width() - col_w >= SHELL_CELL_MIN_W;
             let split_x = body.min.x + col_w;
             let split_y = body.min.y + row_h;
             let g = CELL_GUTTER;
             // X: controls. Y: the Logalith. Z: the portrait. W: the voice.
-            let cell_x = Rect::from_min_max(body.min, Pos2::new(split_x - g, split_y - g));
+            // A hidden neighbour donates its space: no shell widens X, no
+            // bottom row deepens X and Y.
+            let x_max = Pos2::new(
+                if show_shell { split_x - g } else { body.max.x },
+                if show_bottom { split_y - g } else { body.max.y },
+            );
+            let cell_x = Rect::from_min_max(body.min, x_max);
             let cell_y = Rect::from_min_max(
                 Pos2::new(split_x, body.min.y),
-                Pos2::new(body.max.x, split_y - g),
+                Pos2::new(body.max.x, x_max.y),
             );
             let cell_z = Rect::from_min_max(
                 Pos2::new(body.min.x, split_y),
                 Pos2::new(split_x - g, body.max.y),
             );
             let cell_w = Rect::from_min_max(Pos2::new(split_x, split_y), body.max);
-            for cell in [cell_x, cell_y, cell_z, cell_w] {
+            let mut cells = vec![cell_x];
+            if show_shell {
+                cells.push(cell_y);
+            }
+            if show_bottom {
+                cells.push(cell_z);
+                cells.push(cell_w);
+            }
+            for cell in cells {
                 ui.painter()
                     .rect_stroke(cell, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
             }
-            // Sky, then the entity over it — both from one pose, so the
-            // field's lensing bends around the shell that actually gets drawn.
-            let stage = cell_y.shrink(4.0);
-            let sky = ui.painter().with_clip_rect(cell_y.shrink(3.0));
-            let pose = self.shell_pose(stage);
-            self.draw_starfield(&sky, stage, &pose);
-            self.draw_monolith(&sky, stage, &pose);
+            if show_shell {
+                // Sky, then the entity over it — both from one pose, so the
+                // field's lensing bends around the shell that actually gets drawn.
+                let stage = cell_y.shrink(4.0);
+                let sky = ui.painter().with_clip_rect(cell_y.shrink(3.0));
+                let pose = self.shell_pose(stage);
+                self.draw_starfield(&sky, stage, &pose);
+                self.draw_monolith(&sky, stage, &pose);
+            }
             // The panels are content-sized, so the only honest answer to "how big
             // can the art be" is the running app's own measurement. Reported to the
-            // log on startup and on any resize.
-            let z = cell_z.shrink(4.0).size();
-            let area = (z.x.round() as i32, z.y.round() as i32);
-            if self.portrait_area != area {
-                self.portrait_area = area;
-                self.push_log(format!(
-                    "cell z {}x{} px. aspect {:.2}.",
-                    area.0,
-                    area.1,
-                    area.0 as f32 / area.1.max(1) as f32
-                ));
+            // log on startup and on any resize (only while the cell exists —
+            // a hidden cell has no figure to report).
+            if show_bottom {
+                let z = cell_z.shrink(4.0).size();
+                let area = (z.x.round() as i32, z.y.round() as i32);
+                if self.portrait_area != area {
+                    self.portrait_area = area;
+                    self.push_log(format!(
+                        "cell z {}x{} px. aspect {:.2}.",
+                        area.0,
+                        area.1,
+                        area.0 as f32 / area.1.max(1) as f32
+                    ));
+                }
             }
             // Cell Z is the record card, across the whole zone (Billy, 2026-08-05:
             // "its coverage can be the whole of that zblock"). The plinth shared it
@@ -3595,14 +3628,16 @@ impl eframe::App for App {
             // back is a known move rather than a rewrite. What stays here is the
             // loading side: the grids, the parser and its format are Billy's assets
             // and are correct whether or not anything draws them today.
-            ui.allocate_new_ui(
-                egui::UiBuilder::new().max_rect(cell_z.shrink(8.0)),
-                |ui| self.draw_record(ui),
-            );
-            ui.allocate_new_ui(
-                egui::UiBuilder::new().max_rect(cell_w.shrink(8.0)),
-                |ui| self.draw_voice(ui, now, dt),
-            );
+            if show_bottom {
+                ui.allocate_new_ui(
+                    egui::UiBuilder::new().max_rect(cell_z.shrink(8.0)),
+                    |ui| self.draw_record(ui),
+                );
+                ui.allocate_new_ui(
+                    egui::UiBuilder::new().max_rect(cell_w.shrink(8.0)),
+                    |ui| self.draw_voice(ui, now, dt),
+                );
+            }
             ui.allocate_new_ui(
                 egui::UiBuilder::new().max_rect(cell_x.shrink(8.0)),
                 |ui| {
@@ -3777,6 +3812,10 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(egui::vec2(1180.0, 780.0))
+            // The floor under the resize-down priorities: below this the
+            // control column itself would clip, and a clipped control is a
+            // broken control.
+            .with_min_inner_size(egui::vec2(800.0, 600.0))
             .with_title("BLOW YOUR PHASE OFF"),
         ..Default::default()
     };
