@@ -73,8 +73,46 @@ fibonacci-gui`. It drones immediately by design.
 ## State right now
 
 The centerpiece is **quartered**: X controls (with a fake `PARAMETERS`
-window title bar), Y the Logalith, Z **deliberately empty** ("clear the
-zone"), W the voice. Both cuts golden. 59 tests green.
+window title bar), Y the Logalith, Z the record card, W the voice. Both
+cuts golden. 75 tests green.
+
+**The Controls & UI sweep — DONE (2026-08-05, all 13 items, every one
+ear/eye-verdicted by Billy).** His notes live at
+`projects\shared\billy-notes\Controls & UI Sweep.md`. What it changed:
+
+- **Knob tapers, all documented in README**: MASTER renders
+  `position^φ` (the golden ease-in) and *glides* per-sample at a
+  Fibonacci 13 ms — it was stepping per-block, which was the "clicky".
+  INDEX travel is `position^φ`, chosen because it exactly linearizes
+  feedback's concave `x^(1/φ)` (infinite slope at 0 = the old cliff);
+  the whole tree now re-levels per-sample through the same 13 ms glide
+  (`PARAM_GLIDE_S`), because the taper made the always-there per-block
+  stepping audible. GLIDE is `2·position^φ⁴` — ~65% of travel below
+  0.1 s. The pattern to remember: **a taper that speeds the knob
+  uncovers the zipper underneath; taper and glide travel together.**
+- **Master gates the Room's input** (`Frame.master`): the Room used to
+  hear pre-master ops, so master-down + wet-up still sounded. Tested.
+- **rt60 is honest now**: `examples/rt60_probe.rs` (charge, cut, time
+  the fall to −60 dB) measured real decay saturating near 7 s — the
+  feedback cap plus the tap-wobble's interpolation loss — so the knob
+  runs 0.05–8 s log. And full in-loop damp was shaving ~20% off the
+  tail; the loops now keep 1/φ² of the knob.
+- **damp is an MS-20**: resonant 4-pole (SVF + plain 2-pole) on the wet
+  bus straight into the tanh. Cutoff falls ten golden steps; resonance
+  wakes at the 1/φ knee, peaks at Q = φ⁴. *Outside* the comb loops on
+  purpose — a resonant peak inside recirculation is an oscillator.
+- **Presets moved to a header pane** (the `presets` chip): one box
+  filters and names; everything double-confirms (select = dotted bevel,
+  confirm = invert until release); saves never overwrite (`~X`
+  suffix); DELETE double-confirms against the highlighted preset.
+- **Layout**: STRUCTURE panel and the footer scope are gone (scope
+  deleted for good on Billy's verdict; drawing code in history at
+  `8d13d36^`). SCALE is a view toggle — second press flips the scale
+  bank away and gives the phase image back. The phase image owns the
+  left panel's remaining height. Resize-down priority: bottom row
+  hides first (<220 px), the Logalith second (<200 px wide), controls
+  never; window floors at 800×600. Marquee wears Pixeloid Sans
+  (font_probe-vetted) so the log reads apart from the device text.
 
 - **The Logalith** is a five-whorled Fibonacci shell drawn in strokes, not
   pixels. Chamber counts per whorl come from the ratio mode's own integer
@@ -185,8 +223,11 @@ status table in `assets/portraits/README.md`.
 **Engineering next**:
 1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
-   pre-delays from Fibonacci milliseconds, zero new controls. Do NOT land
-   it without Billy's ears on standby.
+   pre-delays from Fibonacci milliseconds, zero new controls. **Parked by
+   Billy's explicit call (2026-08-05)** — the sweep's decay rework
+   ("do my note now, park recursive Room") is landed and approved; the
+   recursive spec stays a separate future campaign. Do NOT land it
+   without Billy's ears on standby.
 2. Release engineering: public README with demo WAVs (`cargo run --release
    --example render`), v1.0.0 tag, portable Windows build, license,
    distribution decision (Billy's call). **If any of that means making the
