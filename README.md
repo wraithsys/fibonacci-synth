@@ -195,6 +195,15 @@ steepest response it feeds. The value box reads the true index (what
 `response()` receives) to three decimals, and typing a number inverts the
 taper, so the display and the mathematics above stay in the same units.
 
+The index also *glides* in the engine: the response curves are evaluated per
+sample on a one-pole-smoothed index — the same Fibonacci 13 ms as MASTER's
+gain — because levels applied per-block step at every block boundary. That
+stepping hid under a linear knob, but the taper made the top of the travel
+fast enough per pixel to click (found by ear within minutes of the taper
+landing). Tested: right after a full-scale INDEX drop the tree must still be
+modulated, and 200 ms later the voice must be indistinguishable from one born
+at the new index.
+
 ### 9. The Room: a comb constellation built from the tone's own ratios
 
 A stereo reverb (`reverb.rs`) that doesn't reverberate the mix — it listens

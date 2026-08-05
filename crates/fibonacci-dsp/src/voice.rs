@@ -14,7 +14,7 @@
 //! immediately (determinism wins over the small discontinuity that can cause).
 
 use crate::algorithm::{compile, AlgorithmId, Compiled, NUM_OPS};
-use crate::patch::{index_response, master_gain, Patch, PHI};
+use crate::patch::{master_gain, Patch, PHI};
 use crate::phase::{allpass_coeff_for, PhaseRotator, DESIGN_HZ, PHASE_PER_PASS};
 
 /// One sample of the voice, with the per-operator outputs exposed — this is
@@ -39,12 +39,14 @@ const MOD_SCALE: f32 = TAU;
 const FB_SCALE: f32 = core::f32::consts::PI;
 /// De-click fade time for the operator power switches.
 const RAMP_SECONDS: f32 = 0.002;
-/// One-pole time constant for the master gain, a Fibonacci 13 ms. A master
-/// change applied per-block is a gain step, and a gain step on a sounding
-/// drone is a click — the same zipper bug the Room's ~15 ms parameter glide
-/// fixed ("mix is clicky", 2026-08-03; "MASTER is clicky", Billy's sweep,
-/// 2026-08-05). Per-sample state, so the contract stays chunk-size invariant.
-const MASTER_GLIDE_S: f32 = 0.013;
+/// One-pole time constant for control glides (master gain and index), a
+/// Fibonacci 13 ms. A parameter applied per-block is a step at every block
+/// boundary, and a step in gain or modulation depth on a sounding drone is a
+/// click — the same zipper bug the Room's ~15 ms parameter glide fixed ("mix
+/// is clicky", 2026-08-03; "MASTER is clicky" and then INDEX after its taper,
+/// Billy's sweep, 2026-08-05). Per-sample state, so the determinism contract
+/// stays chunk-size invariant.
+const PARAM_GLIDE_S: f32 = 0.013;
 /// The Rip Line's delay: the golden interval above the Room's base comb.
 const RIP_DELAY_SECONDS: f32 = 0.029 * PHI;
 /// Phase-modulation injected into each carrier by the Rip at rip = 1.0, in
@@ -121,6 +123,10 @@ pub struct Voice {
     target_freq: f32,
     /// Glide-smoothed master gain, chasing `master_gain(patch.master_level)`.
     master: f32,
+    /// Glide-smoothed index, chasing `patch.index`. The response curves are
+    /// evaluated on this per sample, so an INDEX move re-levels the tree
+    /// continuously instead of stepping at block boundaries.
+    index: f32,
     /// The Rip Line and its most recent output (used one sample later as
     /// carrier phase modulation).
     rip_line: RipLine,
@@ -146,6 +152,7 @@ impl Voice {
             freq: 110.0,
             target_freq: 110.0,
             master: master_gain(patch.master_level),
+            index: patch.index.clamp(0.0, 1.0),
             rip_line: RipLine::new(sample_rate),
             rip_sig: 0.0,
         }
@@ -263,15 +270,20 @@ impl Voice {
         }
         // The INDEX macro: modulator levels and feedback scale through their
         // per-depth golden-exponent curves; carrier levels are untouched.
-        let mut eff_level = [0.0f32; NUM_OPS];
+        // The curves are evaluated per *sample* on the glided index — a
+        // per-block index stepped the whole tree's levels at every block
+        // boundary, which the knob taper turned audible ("clicky", Billy,
+        // 2026-08-05). Exponents are per-block; only the powf base moves.
+        let mut level = [0.0f32; NUM_OPS];
+        let mut index_exp = [0.0f32; NUM_OPS];
         for i in 0..NUM_OPS {
             let depth = self.compiled.depth[i];
-            eff_level[i] = self.patch.ops[i].level
-                * if depth > 1 {
-                    index_response(depth, self.patch.index)
-                } else {
-                    1.0
-                };
+            level[i] = self.patch.ops[i].level;
+            index_exp[i] = if depth > 1 {
+                PHI.powi(depth as i32 - 2)
+            } else {
+                0.0 // sentinel: carriers don't ride the INDEX curves
+            };
         }
         // Feedback always rides the concave depth-1 curve (x^(1/φ)):
         // grit arrives first on the INDEX sweep, in every algorithm.
@@ -279,11 +291,13 @@ impl Voice {
         // two attenuations — the op's level and its feedback — and made
         // feedback inaudible below max index (found by ear, 2026-08-03).
         // Index 0 still silences it exactly.
-        let eff_feedback = self.patch.feedback * index_response(1, self.patch.index);
-        // The master knob's taper and glide: the target is position^φ, and
-        // the rendered gain chases it per-sample like `freq` does.
+        let fb_exp = 1.0 / PHI;
+        // Glide targets and the shared one-pole step: master's target is its
+        // taper position^φ, index's is the knob value; both chase per-sample
+        // like `freq` does.
+        let index_target = self.patch.index.clamp(0.0, 1.0);
         let master_target = master_gain(self.patch.master_level);
-        let master_k = 1.0 - (-1.0 / (MASTER_GLIDE_S * self.sample_rate)).exp();
+        let param_k = 1.0 - (-1.0 / (PARAM_GLIDE_S * self.sample_rate)).exp();
         let inv_carriers = 1.0 / self.compiled.carrier_count as f32;
         let rip = self.patch.rip.clamp(0.0, 1.0);
         self.rip_line.fb = RIP_MAX_FB * rip;
@@ -292,6 +306,17 @@ impl Voice {
 
         for n in 0..count {
             self.freq = self.target_freq + (self.freq - self.target_freq) * glide;
+            self.index += (index_target - self.index) * param_k;
+            let mut eff_level = [0.0f32; NUM_OPS];
+            for i in 0..NUM_OPS {
+                eff_level[i] = level[i]
+                    * if index_exp[i] > 0.0 {
+                        self.index.powf(index_exp[i])
+                    } else {
+                        1.0
+                    };
+            }
+            let eff_feedback = self.patch.feedback * self.index.powf(fb_exp);
 
             // The Rip's phase injection, soft-limited (x/(1+|x|)) so
             // recirculation buildup bends the carriers' phase — capped at
@@ -355,7 +380,7 @@ impl Voice {
             // Feed the Rip Line with the carriers' (master-independent) mean;
             // its output modulates the carriers one sample later.
             self.rip_sig = self.rip_line.process(mix * inv_carriers);
-            self.master += (master_target - self.master) * master_k;
+            self.master += (master_target - self.master) * param_k;
             emit(
                 n,
                 &Frame {

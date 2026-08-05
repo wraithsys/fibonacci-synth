@@ -110,6 +110,45 @@ fn index_zero_is_pure_sines() {
     );
 }
 
+/// An INDEX move re-levels the tree continuously. Right after a full-scale
+/// drop the tree must still be modulated (the glide is still leaving the old
+/// index), and once it settles the voice must be indistinguishable from one
+/// *born* at the new index — carrier phase accumulates independently of
+/// modulation, so settled twins agree sample-for-sample.
+#[test]
+fn index_changes_glide_instead_of_stepping() {
+    let mut patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+    let mut moved = Voice::new(SR, patch);
+    moved.set_freq_hz(110.0);
+    let mut warm = vec![0.0f32; 4800];
+    moved.render(&mut warm);
+
+    patch.index = 0.0;
+    let mut born_low = Voice::new(SR, patch);
+    born_low.set_freq_hz(110.0);
+    born_low.render(&mut warm); // same elapsed samples => same carrier phase
+
+    moved.patch_mut().index = 0.0;
+    let mut ya = vec![0.0f32; 9600];
+    let mut yb = vec![0.0f32; 9600];
+    moved.render(&mut ya);
+    born_low.render(&mut yb);
+
+    let peak_diff = |a: &[f32], b: &[f32]| {
+        a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max)
+    };
+    // The first millisecond: a step to pure sine would agree immediately.
+    assert!(
+        peak_diff(&ya[..48], &yb[..48]) > 0.01,
+        "index jumped: the tree went pure-sine instantly"
+    );
+    // 200 ms is ~15 time constants of 13 ms: the glide has arrived.
+    assert!(
+        peak_diff(&ya[9552..], &yb[9552..]) < 0.01,
+        "the glide never arrived at the new index"
+    );
+}
+
 /// A master change glides instead of stepping. Two phase-locked twins differ
 /// only in one master move; the ratio of their outputs *is* the ratio of their
 /// master gains, so it must walk sample-by-sample from 1 toward the new
