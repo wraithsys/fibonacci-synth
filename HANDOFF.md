@@ -103,15 +103,26 @@ zone"), W the voice. Both cuts golden. 59 tests green.
 ## Open queue
 
 **Billy's items**: the eleven portrait images (brief written, he is on it);
-Space Z's rethink; **the font conflict — blocks any public release**;
-1-bit icon/sigil; starter-preset bank; roster-to-8.
+Space Z's rethink; 1-bit icon/sigil; starter-preset bank; roster-to-8.
 
-**Fonts — files are IN, plumbing is NOT.** Twelve faces sit in
-`assets/fonts/<slug>/`, each with its `LICENSE.txt`, roster and credits in
-`assets/fonts/NOTICE.md`. **Nothing loads them yet** — `install_font` still
-loads the single `assets/font.otf` (Xilla). That is the next job: a
-multi-font system with named roles, the archetype mapping from NOTICE.md,
-and Unifont as the fallback family so gaps resolve cleanly.
+**⚑ THE ONE GATE ON GOING PUBLIC.** Xilla is out of the working tree but
+**still in git history** since `0419ee7` — 30 of 33 commits carry it.
+Billy's call (2026-08-05): a private repo is not an exposure, so the
+history rewrite is **deferred, not cancelled**. It becomes mandatory the
+moment publication is on the table and must happen *before* the repo flips.
+Full procedure, tooling and the GitHub caveat (a force-push does **not**
+purge it) are in README's "Before this repository is made public". Do not
+quietly do this rewrite on your own initiative — Billy wants to watch it.
+
+**Fonts — DONE (2026-08-05).** Twelve faces in `assets/fonts/<slug>/`, each
+with its `LICENSE.txt`, roster and credits in `assets/fonts/NOTICE.md`.
+`install_fonts` loads all of them with named families, Unifont Ex Mono as
+the fallback beneath every one, and **every witness speaks in their own
+face** — archetype → face by normalised prefix, so the Monk's non-breaking
+hyphen (U+2011) and the eight `Logalith Intrusion A–H` all resolve. Sizes
+land on each face's measured pixel grid. `assets/font.otf` and the four
+loose `Xilla *.otf` sources are deleted. Model documented in README's type
+roster section; three new tests gate it.
 
 What the vetting found, because it matters for any future asset:
 - dafont's "Public domain / GPL / OFL" filter is a **self-declaration**.
@@ -135,23 +146,51 @@ What the vetting found, because it matters for any future asset:
   the minimum wording and Billy's requested over-the-top version (credits
   typeset in the fonts they credit).
 
-Xilla itself is untouched: still `assets/font.otf`, still in history since
-`0419ee7`, still the release blocker. Billy's call is **rewrite history with
-git-filter-repo once the swap lands**, in one pass, with him watching.
+One thing the grid measurement corrected: **Modern DOS is 16 px native, not
+8** — the 8 in `ModernDOS8x16` is its width. Ten of the twelve faces measure
+16, both Pixeloids 9, PixAntiqua has no grid at all. Pixeloid Mono keeps the
+UI role, which puts UI sizes at 9 and 18 (Billy chose this over moving the
+whole interface to a single 16 px grid).
+
+**Space Z — DONE (2026-08-05). The record card, across the whole zone**
+(Billy: "its coverage can be the whole of that zblock"). `RELIC <id>` on an
+inverted strip, the archetype in that character's own face, then ERA /
+TSTAMP / ALIAS / EXTRA in a fixed label column, then rarity as pips out of
+eight. Rows never change shape — blanks show `——` — because most entries
+carry no metadata and a card that resized every 45 s would read as a
+glitch. Reads the same relic the voice does, so card and words agree.
+
+The plinth shared the zone for about an hour on a golden cut and was then
+**parked**: Billy's call, image work is not the thread now. The drawing
+side is at `52c5a99` and has been restored from there once already, so
+bringing it back is a known move, not a rewrite.
+
+**Portraits — Billy delivered ten (2026-08-05), 5 of 11 slots load.**
+His bundle `assets/portraits/zboxtxtportraits.txt` (sections marked
+`/name`) is split into grid files beside it. **Two format bugs it exposed,
+both fixed**: `.` and `0` used to count as empty, so art using `0` as a tone
+was hollowed out (one portrait was 28 marks out of 749) — **only a space is
+empty now**, and the 14 older grids were migrated losslessly. And the width
+cap was 96 while nine of ten were 98–120 wide, so they were silently
+refused — cap is now 128. A test parses every grid in the folder and fails
+under 3% ink, because both failures look exactly like art nobody drew yet.
+
+**Still Billy's**: four delivered portraits are unassigned — `human1`,
+`human2`, `human3`, `non_human1` — and only he knows which archetype each
+is; rename to the slot filename and they are live. Three more
+(`cultist`, `schism_leader`, `borg_cube_easter_egg`) are characters the
+relic log has never heard of and need entries, which is his text. Full
+status table in `assets/portraits/README.md`.
 
 **Engineering next**:
-1. **Multi-font plumbing** — roles, archetype mapping, Unifont fallback.
-   Then delete `font.otf` and schedule the history rewrite.
-2. **Space Z = the record's header** (Billy's pick): archetype, era,
-   tstamp, alias, extra, id — the found-document furniture, beside the log
-   text in W. Zone is 574×412, aspect 1.39; the app logs its own figure.
-3. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
+1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
    pre-delays from Fibonacci milliseconds, zero new controls. Do NOT land
    it without Billy's ears on standby.
-4. Release engineering: public README with demo WAVs (`cargo run --release
+2. Release engineering: public README with demo WAVs (`cargo run --release
    --example render`), v1.0.0 tag, portable Windows build, license,
-   distribution decision (Billy's call).
+   distribution decision (Billy's call). **If any of that means making the
+   repo public, the history rewrite above happens first.**
 
 ## Asset convention (Billy, 2026-08-04)
 

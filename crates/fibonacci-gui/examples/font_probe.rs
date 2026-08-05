@@ -16,6 +16,14 @@
 //!    quotes. A display face that lacks them falls back mid-sentence to a different
 //!    typeface, which looks like a bug. This was a guess until the files arrived.
 //!
+//! And now a third, because the instrument has to *render* these and not just carry
+//! them: **what pixel grid was the face drawn on?** A bitmap face scaled to a size
+//! that is not an integer multiple of its own grid lands its stems between pixels,
+//! and with feathering off that is not a soft edge — it is a stem that vanishes.
+//! The number is measurable rather than arguable: every outline coordinate in a
+//! pixel font is a multiple of one quantum, so the GCD of the coordinates *is* the
+//! quantum, and `units_per_em / quantum` is the native height in pixels.
+//!
 //! Dev-dependency tooling; the instrument itself never parses a font table.
 
 use std::path::{Path, PathBuf};
@@ -115,6 +123,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         println!("  glyphs  : {}", report.join("  |  "));
+
+        // The pixel grid, measured off the outlines themselves.
+        let upem = face.units_per_em();
+        let (quantum, curves) = pixel_quantum(&face);
+        let note = if curves > 0 {
+            format!("  ({curves} of the sampled glyphs are drawn with curves)")
+        } else {
+            String::new()
+        };
+        match quantum {
+            // A GCD of one unit is the absence of a grid, not a grid of one: the
+            // coordinates simply share no common step.
+            Some(1) | None => println!("  grid    : no common step — size it freely{note}"),
+            Some(q) if upem as u32 % q == 0 => println!(
+                "  grid    : {upem} upem / {q} = {n} px native  (crisp at {n}, {}, {} …){note}",
+                2 * (upem as u32 / q),
+                3 * (upem as u32 / q),
+                n = upem as u32 / q,
+            ),
+            Some(q) => println!(
+                "  grid    : {upem} upem / {q} = {:.2} px — a step that does not divide the em, \
+                 so there is no size at which this face lands whole{note}",
+                upem as f32 / q as f32
+            ),
+        }
         println!(
             "  verdict : {}",
             match (missing_total, licence.is_some() || licence_url.is_some()) {
@@ -127,6 +160,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
     Ok(())
+}
+
+/// The spacing of the grid a face was drawn on, in font units, and how many of the
+/// sampled glyphs turned out to be curves rather than rectangles.
+///
+/// A bitmap face is rectangles: every point sits on a multiple of one quantum, so
+/// the GCD of every coordinate across a decent sample recovers it exactly. Curves
+/// are counted rather than fatal, because a face can be a pixel grid with a handful
+/// of drawn glyphs in it — Unifont is exactly that — and throwing the measurement
+/// away on the first one would lose the number that matters.
+fn pixel_quantum(face: &ttf_parser::Face) -> (Option<u32>, usize) {
+    struct Grid {
+        gcd: u32,
+        curved: bool,
+    }
+    impl Grid {
+        fn eat(&mut self, v: f32) {
+            // A fractional coordinate is not on any integer grid either.
+            if v.fract().abs() > 0.001 {
+                self.curved = true;
+                return;
+            }
+            let n = v.abs().round() as u32;
+            if n != 0 {
+                self.gcd = gcd(self.gcd, n);
+            }
+        }
+    }
+    impl ttf_parser::OutlineBuilder for Grid {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.eat(x);
+            self.eat(y);
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.eat(x);
+            self.eat(y);
+        }
+        fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+            self.curved = true;
+        }
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+            self.curved = true;
+        }
+        fn close(&mut self) {}
+    }
+
+    let mut acc = 0u32;
+    let mut curves = 0usize;
+    let sample = ('A'..='Z').chain('a'..='z').chain('0'..='9').chain("#@%&.,".chars());
+    for c in sample {
+        let Some(id) = face.glyph_index(c) else { continue };
+        let mut g = Grid { gcd: 0, curved: false };
+        face.outline_glyph(id, &mut g);
+        if g.curved {
+            curves += 1;
+        } else {
+            acc = gcd(acc, g.gcd);
+        }
+    }
+    ((acc > 0).then_some(acc), curves)
+}
+
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {

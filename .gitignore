@@ -1,3 +1,18 @@
 /target
 /renders
 /crates/fibonacci-gui/presets/
+
+# Unconfirmed assets never enter history.
+#
+# A file in a commit is a file in every clone forever — that is the whole lesson of
+# assets/font.otf, which is gone from the working tree and still in this repo's
+# history and still the one thing blocking going public. These are derivatives of
+# source images whose licence is not established, so they stay local until their
+# provenance is settled. Ignored rather than merely un-added, because "never run
+# git add -A in this repo" is not a rule anyone can keep.
+#
+# The briefs beside them are ours and stay tracked.
+/crates/fibonacci-gui/assets/portraits/*.txt
+/crates/fibonacci-gui/assets/*.jpg
+/crates/fibonacci-gui/assets/*.png
+/docs/

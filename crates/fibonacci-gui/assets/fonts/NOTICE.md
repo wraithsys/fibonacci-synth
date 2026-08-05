@@ -56,14 +56,38 @@ Fuller sketch, in the register of the rest of the instrument:
   fonts, which owe nothing and therefore say nothing.
 - Or a dedicated **CREDITS panel** in the WoH idiom: an inverted strip header, one
   row per font, each row showing the font's own name in its own face at its own
-  native pixel size (8 px for Modern DOS, 9 px for the Pixeloids, 16 px for the
-  rest), with the licence in the UI face beside it. The size differences become the
-  design rather than a problem to normalise.
+  native pixel size (see the grids below — 9 px for the Pixeloids, 16 px for nearly
+  everything else), with the licence in the UI face beside it. The size differences
+  become the design rather than a problem to normalise.
 - The four attribution-required fonts get a marker — a small filled square, say —
   so the *required* credit is visually distinct from the courtesy ones. Honest, and
   it makes the obligation legible rather than buried.
 
 Whichever, the rule holds: a font's own name is always shown in that font.
+
+## Native grids (measured 2026-08-05)
+
+These are bitmap faces, so each is only crisp at whole multiples of the grid it was
+drawn on. The number is not a claim off the font's name — every coordinate in a
+bitmap face is a multiple of one step, so the GCD of its outlines *is* the step and
+`units_per_em / step` is the native height. `font_probe` reports it.
+
+| grid | faces |
+|---|---|
+| **16 px** | Modern DOS, European Teletext, Pixel Operator, Better VCR, Enter Command, Scriptorium, Cyborg Sister, Alkhemikal, Unifont Ex Mono |
+| **9 px** | Pixeloid Mono, Pixeloid Sans |
+| none | PixAntiqua — no common step; size it freely |
+
+Two things this corrected. **Modern DOS is 16 px, not 8** — the 8 in `ModernDOS8x16`
+is its width, and this document said 8 until the outlines were measured. And
+**Unifont Ex Mono is on the 16 px grid** while carrying 62 of the 68 sampled glyphs
+as real curves: it is a smoothed build of a bitmap face, which is exactly why it can
+be the fallback under a 16 px face without looking like a different size.
+
+The consequence for the interface: 9 and 16 have no common multiple short of 144, so
+the UI face and the voice faces cannot both land whole at one size. Pixeloid Mono in
+the UI role means UI sizes of 9 and 18. That is a live design question, not a
+settled one.
 
 ## Provenance notes
 

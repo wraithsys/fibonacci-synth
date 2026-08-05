@@ -42,7 +42,7 @@ portait in it). And then text box that generates."*
 |------|----------|-----------------------|
 | **X** top left | The performance controls — unfolding chips, then INDEX and RIP, then fb / master / glide / drone hz | Ordering confirmed unchanged; the column just gained a frame |
 | **Y** top right | The Logalith | *ss 2*: a chunky 8-bit spiral with real arm thickness and staircased edges, in the register of the 1-bit pixel-art panels (images 3–4). Hairline vectors read as a diagram; the raster reads as an animal |
-| **Z** bottom left | The portrait plinth | Image 5 — the striped pixel-art portraits — **but one portrait, not four**. Asset slot per dread band; the art is Billy's pen |
+| **Z** bottom left | **The record card**, the whole zone | Was image 5's striped pixel-art portrait plinth; cleared 2026-08-04 ("clear the zone") and refilled 2026-08-05 with Billy's pick — the record's header: id, archetype in the speaker's own face, era, tstamp, alias, extra, rarity pips. The plinth was briefly restored beside it that same day and then parked again ("its coverage can be the whole of that zblock"); its drawing code is at `52c5a99`, its art and loader are live |
 | bottom right | The voice | *"text box that **generates**"* — a teletype reveal, "but humanised": jittered per-character dwell and pauses at punctuation |
 
 Both cuts are golden: top row `1/φ` of the height, left column the minor
@@ -73,7 +73,9 @@ That split lands on the discouragement design without being asked to — witness
 speak while the law holds, the entity speaks when it doesn't.
 
 Billy's calls: portrait framing, dread-driven *and* random selection, replace all
-three text files. Metadata placement is pending a screenshot from him.
+three text files. Metadata placement was pending a screenshot from him and is now
+settled: it is the record card in **cell Z**, beside the log text rather than
+crowding it.
 
 **Agitation** is the mechanic he asked me to design. It is a leaky integral of
 `max(rip, haunt)` — deliberately not the dread band, because dread reads the
@@ -317,14 +319,24 @@ counts, growth, whorl count, sweep, ripple and rib behaviour are one line each.
 
 ## Open items (Billy's calls)
 
-- **Font**: Billy picked **Xilla** — installed as
-  `crates/fibonacci-gui/assets/font.otf`, loaded at startup with the
-  built-in monospace kept as glyph fallback (Xilla is a small display face;
-  φ, ×, — and friends may fall back). **License TODO**: Xilla arrived
-  without a license file (Cozette/Press Start 2P/Terminus in
-  `projects\fonts` all have theirs) — terms must be confirmed before
-  release, or we swap to one of the licensed alternates. Font *sizes* may
-  need retuning to Xilla's native size in the design pass.
+- ~~**Font**: Billy picked **Xilla**~~ — **resolved 2026-08-05.** Xilla arrived
+  with no licence file and no embedded terms, so it was replaced rather than
+  confirmed: twelve vetted faces now live in `assets/fonts/<slug>/`, each beside
+  its own `LICENSE.txt`, roles and credits in `fonts/NOTICE.md`, and every witness
+  speaks in their own. `assets/font.otf` is deleted. **It remains in git history
+  since `0419ee7`** — and Billy's call (2026-08-05) is that a private repo is not
+  an exposure, so the rewrite is **deferred until publication is actually on the
+  table**, at which point it happens *before* the repo flips. Procedure, tooling
+  and the GitHub caveat are in README's "Before this repository is made public".
+
+  Two size questions are still open and are Billy's: the interface face and the
+  size it reads at. The roster is pixel type, so a face is only crisp at whole
+  multiples of the grid it was drawn on, and the grids are 16 px (ten faces), 9 px
+  (both Pixeloids) and none at all (PixAntiqua). Pixeloid Mono holds the interface
+  role, which puts its sizes at 9 and 18 with nothing between — see README's type
+  roster section for the measurement and the arithmetic.
+  The four loose `Xilla *.otf` sources in `assets/` were deleted the same day, on
+  Billy's call — they were never tracked, so nothing but the history remains.
 - **Icon**: final sigil — I can prototype constructions, Billy decides.
 - Whether the centerpiece uses the smooth polar spiral, the rectangle
   construction, or construction-lines-over-curve (my lean: construction

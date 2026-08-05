@@ -386,7 +386,12 @@ fn convert(input: &Path, o: &Opts) -> Result<Grid, Box<dyn std::error::Error>> {
             if o.invert {
                 ink = !ink;
             }
-            row.push(if ink { '#' } else { '.' });
+            // A blank is the only empty cell the loader recognises. It used to also
+            // accept `.` and `0`, which is what this emitted — until a batch arrived
+            // using `0` as its darkest tone and was read as almost entirely
+            // background. The narrow rule cannot be got wrong, so the converter now
+            // writes what the loader means.
+            row.push(if ink { '#' } else { ' ' });
             if ink {
                 inked += 1;
             }

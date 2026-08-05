@@ -294,6 +294,12 @@ const ROCK_TILT: f32 = 0.075;
 const ROCK_TILT_2: f32 = 0.34;
 
 // ── The portrait plinth (Space Z) ──────────────────────────────────────────
+// Parked (2026-08-05). The drawing side — scanline field, animated point cloud,
+// the turning shell mark, and the `sig_*` snapped-stroke helpers it used — lives
+// at `52c5a99` and was lifted back out of there once already, so restoring it is
+// a known move. The loading side stays: grids, parser, frame sets and hot-reload
+// are Billy's assets, and they are correct whether or not anything draws them.
+
 
 // ── The Logalith's sky ─────────────────────────────────────────────────────
 // Billy's mythology (2026-08-04): the shell is a space entity that emits
@@ -629,30 +635,224 @@ fn dither_circle(painter: &egui::Painter, center: Pos2, radius: f32, density: f3
     }
 }
 
-/// Install the design-pass font if present (Billy's pick — currently Xilla).
-/// Falls back to the built-in monospace per missing file or missing glyphs
-/// (egui keeps the default fonts as fallbacks in the family list).
-fn install_font(ctx: &egui::Context) {
-    for path in [
-        "crates/fibonacci-gui/assets/font.otf",
-        "crates/fibonacci-gui/assets/font.ttf",
-        "assets/font.otf",
-        "assets/font.ttf",
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts
-                .font_data
-                .insert("billy".into(), egui::FontData::from_owned(bytes));
-            for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-                if let Some(list) = fonts.families.get_mut(&family) {
-                    list.insert(0, "billy".into());
-                }
+// ── The type roster ────────────────────────────────────────────────────────────
+// Twelve licensed faces, each sitting beside its own `LICENSE.txt` in
+// `assets/fonts/<slug>/`, with roles and credits recorded in `fonts/NOTICE.md`.
+// This replaces a single unlicensed file, so the rule that replaced it is the one
+// worth restating in code: **a face with no licence file never enters the folder,
+// and only what is in the folder can load.**
+//
+// `native` is the pixel grid the face was drawn on — *measured*, by
+// `examples/font_probe.rs`, not read off its name. Every coordinate in a bitmap
+// face is a multiple of one step, so the GCD of its outlines is that step and
+// `units_per_em / step` is the height in pixels at which the face lands whole.
+// Ten of the twelve are 16 px, the two Pixeloids are 9, and PixAntiqua shares no
+// common step at all, so it is free at any size. Modern DOS is 16 despite being
+// named 8x16: the 8 is its width, which is the kind of thing that is only settled
+// by measuring.
+struct Face {
+    /// Both the folder under `assets/fonts/` and the egui family name.
+    slug: &'static str,
+    file: &'static str,
+    /// The grid it was drawn on, in pixels. `None` — no grid; size it freely.
+    native: Option<f32>,
+}
+
+const FACES: &[Face] = &[
+    Face { slug: "pixeloid_mono", file: "PixeloidMono.ttf", native: Some(9.0) },
+    Face { slug: "pixeloid_sans", file: "PixeloidSans.ttf", native: Some(9.0) },
+    Face { slug: "unifontexmono", file: "UnifontExMono.ttf", native: Some(16.0) },
+    Face { slug: "modern_dos", file: "ModernDOS8x16.ttf", native: Some(16.0) },
+    Face { slug: "european_teletext", file: "EuropeanTeletext.ttf", native: Some(16.0) },
+    Face { slug: "pixel_operator", file: "PixelOperator.ttf", native: Some(16.0) },
+    Face { slug: "better_vcr", file: "BetterVCR 25.09.ttf", native: Some(16.0) },
+    Face { slug: "enter_command", file: "EnterCommand.ttf", native: Some(16.0) },
+    Face { slug: "scriptorium", file: "Scriptorium.ttf", native: Some(16.0) },
+    Face { slug: "cyborgsister", file: "CyborgSister.ttf", native: Some(16.0) },
+    Face { slug: "alkhemikal", file: "Alkhemikal.ttf", native: Some(16.0) },
+    Face { slug: "pixantiqua", file: "PixAntiqua.ttf", native: None },
+];
+
+/// The face the interface itself speaks in: chrome, labels, marginalia.
+const UI_FACE: &str = "pixeloid_mono";
+
+/// The entity's own voice, and the fallback beneath every other face. Unifont is
+/// the only face here with complete coverage of φ ρ π Δ • ◦ ¤ and the subscripts,
+/// and it carries most of the BMP besides — so a glyph its neighbour lacks resolves
+/// to a real glyph instead of a tofu box. That it is also what the Logalith speaks
+/// in is not a coincidence: the thing underneath everything is the thing underneath
+/// everything.
+const FALLBACK_FACE: &str = "unifontexmono";
+
+/// The voice box's size ladder, largest first: the box is drawn at the biggest of
+/// these its finished entry actually fits in.
+///
+/// Two rungs, because these are pixel faces and a ladder is the only way to be both
+/// larger and crisp. Ten of the twelve are drawn on a 16 px grid, so **between 16
+/// and 32 there is no size at all** — asking for 24 just rounds to one of them. The
+/// long entries are why the smaller rung has to stay: MycelliAI's six lines at 32 px
+/// wrap past twice the height of the cell, while most boxes have room to spare at
+/// 32. The two Pixeloids, on their 9 px grid, get 36 and 18.
+const VOICE_PX: [f32; 2] = [32.0, 16.0];
+
+/// Who speaks in what. Keyed on the archetype in `relic_log.json` and matched as a
+/// normalised prefix, so `Logalith Intrusion F` finds the entity and `MycelliAI
+/// Global Forest Agent` finds Alkhemikal without either full name living here.
+/// The roles are NOTICE.md's; this is that table made executable.
+const VOICES: &[(&str, &str)] = &[
+    ("overworked acoustic engineer", "modern_dos"),
+    ("archivist historian", "pixantiqua"),
+    ("government auditor", "european_teletext"),
+    ("field psychologist", "pixeloid_sans"),
+    ("cosmic acoustician", "pixel_operator"),
+    ("survivor", "better_vcr"),
+    ("junior technician", "enter_command"),
+    ("shell-listening monk", "scriptorium"),
+    ("future witness", "cyborgsister"),
+    ("mycelliai", "alkhemikal"),
+    ("logalith intrusion", FALLBACK_FACE),
+];
+
+/// Fold an archetype to the form the table is written in.
+///
+/// Necessary because archetypes are Billy's prose and arrive with whatever the
+/// editor produced: the Monk is written with a **non-breaking hyphen** (U+2011),
+/// which is indistinguishable on screen from `-` and never equal to it. A table
+/// keyed on raw strings would have silently given him the fallback face and looked
+/// like a font bug rather than a punctuation one.
+fn normalize_archetype(s: &str) -> String {
+    s.trim()
+        .chars()
+        .map(|c| match c {
+            // The dash family, plus the minus sign, plus underscore.
+            '\u{2010}'..='\u{2015}' | '\u{2212}' | '_' => '-',
+            c => c.to_ascii_lowercase(),
+        })
+        .collect()
+}
+
+/// The face an archetype speaks in.
+fn face_for_archetype(archetype: &str) -> &'static str {
+    let key = normalize_archetype(archetype);
+    VOICES
+        .iter()
+        .find(|(name, _)| key.starts_with(name))
+        .map(|(_, slug)| *slug)
+        // Someone Billy has written but not yet cast speaks in the interface's own
+        // face — which reads as unattributed, rather than as somebody else.
+        .unwrap_or(UI_FACE)
+}
+
+fn family(slug: &str) -> egui::FontFamily {
+    egui::FontFamily::Name(slug.into())
+}
+
+/// A size at which a face lands whole, in **device** pixels.
+///
+/// egui rasterises at `size × pixels_per_point`, so the display's scaling is part
+/// of this arithmetic rather than a detail to wave at: on a 125 % display, asking
+/// for 16 gets 20 device pixels, and a face drawn on a 16 px grid stretched to 20
+/// doubles every fifth column. Asking for 12.8 instead gets exactly 16. The nearest
+/// whole multiple is what is picked, so the apparent size stays as close to the
+/// request as the grid allows — a coarse grid simply cannot honour every request,
+/// and pretending otherwise is what makes pixel type look muddy.
+fn grid_size(want: f32, native: Option<f32>, ppp: f32) -> f32 {
+    let Some(native) = native else { return want };
+    let k = (want * ppp / native).round().max(1.0);
+    k * native / ppp
+}
+
+fn native_of(slug: &str) -> Option<f32> {
+    FACES.iter().find(|f| f.slug == slug).and_then(|f| f.native)
+}
+
+/// A size in the interface's own face, landed on its grid.
+fn ui_font(ctx: &egui::Context, want: f32) -> FontId {
+    FontId::new(
+        grid_size(want, native_of(UI_FACE), ctx.pixels_per_point()),
+        family(UI_FACE),
+    )
+}
+
+fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
+    // What the interface will actually be drawn at, said out loud. The display's
+    // scaling decides this and a screenshot cannot show it — a 12 px request lands
+    // on 9 at 100 % and on 18 at 125 %, which is the difference between the type
+    // looking small and looking large for reasons that are nobody's taste.
+    let ppp = ctx.pixels_per_point();
+    eprintln!(
+        "type: {UI_FACE} on a {} px grid, {ppp:.2} px/pt — body {:.1}, heading {:.1}, voice up to {:.1}",
+        native_of(UI_FACE).unwrap_or(0.0),
+        grid_size(12.0, native_of(UI_FACE), ppp),
+        grid_size(15.0, native_of(UI_FACE), ppp),
+        VOICE_PX[0],
+    );
+}
+
+/// The roster as egui sees it: every face that is present gets its own family, with
+/// the fallback beneath it and egui's own fonts beneath that.
+///
+/// A missing file costs its own role and nothing else. The family is registered
+/// either way — an unregistered `FontFamily::Name` is a **panic at layout time**,
+/// and a face failing to copy must not be able to take the instrument down. What it
+/// gets instead is the fallback, which is the correct answer anyway.
+///
+/// Separate from `install_fonts` so the families can be checked without a window:
+/// that panic is the one new way this code can kill the instrument, and it is not
+/// the kind of thing to find out about on Billy's machine.
+fn font_definitions() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    // Whatever egui ships with, kept at the bottom of every chain so emoji and the
+    // stock faces still resolve.
+    let builtin: Vec<String> = fonts
+        .families
+        .get(&egui::FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut missing: Vec<&str> = Vec::new();
+    for face in FACES {
+        match asset_path(&format!("fonts/{}/{}", face.slug, face.file))
+            .and_then(|p| std::fs::read(p).ok())
+        {
+            Some(bytes) => {
+                fonts
+                    .font_data
+                    .insert(face.slug.to_string(), egui::FontData::from_owned(bytes));
             }
-            ctx.set_fonts(fonts);
-            return;
+            None => missing.push(face.slug),
         }
     }
+    if !missing.is_empty() {
+        // A windowed binary has nowhere to put this, but a `cargo run` does, and
+        // silent type substitution is exactly the bug that is hardest to see.
+        eprintln!("fonts not found, falling back: {}", missing.join(", "));
+    }
+
+    let have = |slug: &str| fonts.font_data.contains_key(slug);
+    let chain = |slug: &str| -> Vec<String> {
+        let mut list = Vec::new();
+        if have(slug) {
+            list.push(slug.to_string());
+        }
+        if slug != FALLBACK_FACE && have(FALLBACK_FACE) {
+            list.push(FALLBACK_FACE.to_string());
+        }
+        list.extend(builtin.iter().cloned());
+        list
+    };
+
+    for face in FACES {
+        fonts.families.insert(family(face.slug), chain(face.slug));
+    }
+    // The interface's face answers to the stock families too, so every `monospace`
+    // and every proportional label already in the source lands on the roster
+    // without being rewritten one call at a time.
+    for stock in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+        fonts.families.insert(stock, chain(UI_FACE));
+    }
+    fonts
 }
 
 fn one_bit_style(ctx: &egui::Context) {
@@ -686,12 +886,17 @@ fn one_bit_style(ctx: &egui::Context) {
     visuals.widgets.active.bg_stroke = Stroke::new(2.0_f32, WHITE);
     let mut style = (*ctx.style()).clone();
     style.visuals = visuals;
+    // Sizes go through the grid, because the roster is pixel type: 12 px of a face
+    // drawn on a 9 px grid is nine pixels of glyph smeared across twelve, which is
+    // the same law as `feathering = false` applied to letterforms instead of edges.
+    // The two requests below are the sizes this instrument has always asked for;
+    // what changed is that they now land somewhere the face can actually be drawn.
     for (_, font) in style.text_styles.iter_mut() {
-        *font = FontId::monospace(12.0);
+        *font = ui_font(ctx, 12.0);
     }
     style
         .text_styles
-        .insert(egui::TextStyle::Heading, FontId::monospace(15.0));
+        .insert(egui::TextStyle::Heading, ui_font(ctx, 15.0));
 
     // Breathing room, app-wide (Billy: "give the parameter controls some padding
     // (may be worth looking at this app wide)"). Set here rather than per-panel so
@@ -837,9 +1042,17 @@ struct ShellPose {
 // be moved in whole pixels as a block, whereas every point in a cloud can move
 // independently. The same lesson as the shell — strokes and points animate,
 // rasters don't.
-/// A source grid wider or taller than this is rejected: any renderer for these has
-/// to touch every point every frame, so grid size is a per-frame cost.
-const PORTRAIT_MAX_W: usize = 96;
+/// A source grid wider or taller than this is rejected: the cloud is redrawn every
+/// frame, so grid size is a per-frame cost.
+///
+/// The width was 96 until Billy's second batch arrived 98–120 wide and **nine of
+/// its ten portraits were silently refused** — a rejected grid falls back to the
+/// shell mark, so the art simply never appeared and nothing said why. 128 is the
+/// new width, chosen off the measurement rather than the other way round: the
+/// widest piece is the Logalith at 120, and the batch's point counts run 750–4,300
+/// against the first batch's 2,718, so the per-frame cost the cap exists to bound
+/// did not actually change.
+const PORTRAIT_MAX_W: usize = 128;
 const PORTRAIT_MAX_H: usize = 120;
 /// How many numbered frames to look for beside the base name.
 const PORTRAIT_MAX_FRAMES: usize = 64;
@@ -879,9 +1092,9 @@ impl Portrait {
     /// frame — up through the set and back down without repeating either end, so
     /// there is no seam and no double-length hold at the turning points.
     ///
-    /// Kept while cell Z is empty: the frame *sets* and their ordering are the part
-    /// of the portrait work most likely to survive a rethink, and this is the only
-    /// piece of it with arithmetic worth not re-deriving.
+    /// Unused while the plinth is parked. Kept because the frame *sets* and their
+    /// ordering are the part of the portrait work most likely to survive a rethink,
+    /// and this is the only piece of it with arithmetic worth not re-deriving.
     #[allow(dead_code)]
     fn frame_at(&self, t: f32, secs: f32) -> &PortraitFrame {
         let n = self.frames.len();
@@ -897,11 +1110,21 @@ impl Portrait {
 
 /// Parse a dithered 1-bit grid.
 ///
-/// One line per pixel row. **Space, `.` and `0` are empty; every other character
-/// is ink** — deliberately liberal, because image-to-ASCII converters emit all
-/// sorts (`#`, `@`, `*`, `X`, `1`, `%`) and Billy should not have to match a
-/// character set. Comments start with `//`, *not* `#`, since `#` is the commonest
-/// ink character there is. A UTF-8 BOM is stripped, as everywhere else.
+/// One line per pixel row. **Only a space is empty; every other character is ink**
+/// — deliberately liberal, because image-to-ASCII converters emit all sorts (`#`,
+/// `@`, `*`, `X`, `1`, `%`) and Billy should not have to match a character set.
+/// Comments start with `//`, *not* `#`, since `#` is the commonest ink character
+/// there is. A UTF-8 BOM is stripped, as everywhere else.
+///
+/// `.` and `0` used to count as empty too, and that was a real bug rather than a
+/// harmless extra: Billy's second batch of art (2026-08-05) used `0` as its darkest
+/// tone, so one portrait arrived 99×51 with 721 zeros and 28 other marks and would
+/// have drawn as two dozen scattered dots — a broken-looking asset caused by a
+/// format disagreement, in the same family as the CRLF and BOM bugs. The rule is
+/// now the narrowest one that cannot be ambiguous: **whatever is not blank, is
+/// there.** The fourteen grids from the first batch used `.` as their background
+/// and contained no spaces at all, so they were migrated to spaces in the same
+/// pass; their point counts came through identical.
 ///
 /// Ragged lines are fine: width is the longest row, and short rows are simply
 /// empty to their right.
@@ -913,7 +1136,7 @@ fn parse_portrait_grid(text: &str) -> Option<(usize, usize, Vec<(u8, u8)>)> {
         .collect();
     // Trim wholly-empty rows off the top and bottom, so a converter's padding
     // does not shrink the drawn portrait.
-    let inked = |l: &str| l.chars().any(|c| !matches!(c, ' ' | '.' | '0'));
+    let inked = |l: &str| l.chars().any(|c| c != ' ');
     let first = rows.iter().position(|l| inked(l))?;
     let last = rows.iter().rposition(|l| inked(l))?;
     let rows = &rows[first..=last];
@@ -925,7 +1148,7 @@ fn parse_portrait_grid(text: &str) -> Option<(usize, usize, Vec<(u8, u8)>)> {
     let mut pts = Vec::new();
     for (y, line) in rows.iter().enumerate() {
         for (x, c) in line.chars().enumerate() {
-            if !matches!(c, ' ' | '.' | '0') {
+            if c != ' ' {
                 pts.push((x as u8, y as u8));
             }
         }
@@ -1001,10 +1224,8 @@ const AGITATE_INTRUDE_CHANCE: f32 = 0.70;
 /// by its own intrusion.
 const AGITATE_INTERRUPT: f32 = 0.45;
 
-/// Parsed but not yet displayed: Billy is sending a screenshot of where the
-/// metadata should sit on the box. Kept read so a malformed field is caught at
-/// load rather than at the moment it is first shown.
-#[allow(dead_code)]
+/// The found-document furniture: what a record says about itself besides what its
+/// witness said. Shown on the record card in cell Z.
 #[derive(Clone, serde::Deserialize)]
 struct RelicMeta {
     #[serde(default)]
@@ -1015,9 +1236,9 @@ struct RelicMeta {
     extra: String,
 }
 
-/// `id`, `archetype`, `era` and `metadata` are read from the file but not yet
-/// shown — they are what the pending metadata strip will display.
-#[allow(dead_code)]
+/// One thing said, and everything the record knows about who said it. `id`,
+/// `archetype`, `era`, `rarity` and `metadata` are the record card in cell Z;
+/// `log` and `intrusion` are the voice in cell W.
 #[derive(Clone, serde::Deserialize)]
 struct Relic {
     #[serde(default)]
@@ -1053,6 +1274,54 @@ impl Relic {
     fn is_pure_intrusion(&self) -> bool {
         self.log.is_empty() && !self.intrusion.is_empty()
     }
+}
+
+// ── Space Z: the record card ───────────────────────────────────────────────────
+// Billy's pick for the zone once the portraits came out of it: the found-document
+// furniture — archetype, era, tstamp, alias, extra, id — standing beside the log
+// text in W rather than crowding it.
+
+/// What a blank field shows. Most entries carry no `tstamp`, `alias` or `extra` at
+/// all — they are optional by design, so that adding a line to the log stays four
+/// lines of JSON.
+const NOT_RECORDED: &str = "——";
+
+/// The speaker's name on the card, in the speaker's own face.
+const RECORD_NAME_PX: f32 = 16.0;
+
+/// Rarity is drawn as pips rather than named alone, because the weights *are* the
+/// answer to "how often will I see this": 8, 5, 3, 1 — Fibonacci, and out of eight,
+/// so a full row is the commonest thing in the log and one pip is the rarest. Drawn
+/// as squares rather than typed as bullets for the same reason the window buttons
+/// are drawn: a glyph can fall back to another face's idea of `•`.
+const RARITY_SLOTS: u32 = 8;
+const PIP_PX: f32 = 6.0;
+const PIP_GAP: f32 = 3.0;
+
+/// The label column, in characters. The interface face is monospaced, so padding a
+/// label to a fixed width is all the alignment this needs.
+const RECORD_LABEL_W: usize = 8;
+
+/// The record card's rows, in fixed order, blanks included.
+///
+/// Fixed is the whole point. A card that showed only the fields it had would change
+/// height every time the voice advanced, and a panel that resizes itself every 45
+/// seconds reads as a glitch; a form with an unfilled line reads as a record, which
+/// is the idiom this furniture is borrowed from.
+fn record_rows(r: &Relic) -> [(&'static str, String); 4] {
+    let filled = |s: &str| {
+        if s.trim().is_empty() {
+            NOT_RECORDED.to_string()
+        } else {
+            s.trim().to_string()
+        }
+    };
+    [
+        ("ERA", filled(&r.era)),
+        ("TSTAMP", filled(&r.metadata.tstamp)),
+        ("ALIAS", filled(&r.metadata.alias)),
+        ("EXTRA", filled(&r.metadata.extra)),
+    ]
 }
 
 // ── The relic log's on-disk shape ──────────────────────────────────────────
@@ -2176,7 +2445,7 @@ impl App {
                 pos,
                 Align2::CENTER_CENTER,
                 if parallel { "P" } else { "S" },
-                FontId::monospace(11.0),
+                ui_font(painter.ctx(), 11.0),
                 WHITE,
             );
         }
@@ -2188,7 +2457,7 @@ impl App {
                 pos + Vec2::new(0.0, 13.0),
                 Align2::CENTER_CENTER,
                 format!("{}", i + 1),
-                FontId::monospace(10.0),
+                ui_font(painter.ctx(), 10.0),
                 WHITE,
             );
         }
@@ -2251,7 +2520,7 @@ impl App {
                 p,
                 Align2::CENTER_CENTER,
                 format!("{}", i + 1),
-                FontId::monospace(10.0),
+                ui_font(painter.ctx(), 10.0),
                 WHITE,
             );
         }
@@ -2485,7 +2754,7 @@ impl App {
             .collect::<Vec<_>>()
             .join("   ·   ");
         let painter = painter.with_clip_rect(inner);
-        let galley = painter.layout_no_wrap(text, FontId::monospace(11.0), WHITE);
+        let galley = painter.layout_no_wrap(text, ui_font(painter.ctx(), 11.0), WHITE);
         // A short gap, not a screenful: a screenful left the band blank for a
         // third of every cycle (measured off Billy's 00:00:57 screenshot —
         // ~23 s of nothing out of 58 s). The ticker stays populated now.
@@ -2629,6 +2898,69 @@ impl App {
         (r.log.join("\n"), false)
     }
 
+    /// Cell Z: the record's header for whoever is speaking in W.
+    ///
+    /// Reads the same relic the voice box reads, so the card and the words can never
+    /// disagree about who this is — including the face, which comes from the same
+    /// archetype mapping. The card is the only place the log's own bookkeeping is
+    /// visible: `id`, `rarity` and the metadata were parsed from the first version
+    /// of the file and had nowhere to go until now.
+    fn draw_record(&self, ui: &mut egui::Ui) {
+        let Some(r) = self.relics.get(self.relic) else {
+            return;
+        };
+        Self::inverted_strip(ui, &format!("RELIC {}", r.id));
+        ui.add_space(6.0);
+
+        // The speaker's name in the speaker's own face, and left exactly as Billy
+        // wrote it: the archetype is his text, so the program does not get to
+        // uppercase it into a label.
+        let face = face_for_archetype(&r.archetype);
+        ui.label(
+            egui::RichText::new(&r.archetype).color(WHITE).font(FontId::new(
+                grid_size(RECORD_NAME_PX, native_of(face), ui.ctx().pixels_per_point()),
+                family(face),
+            )),
+        );
+        ui.add_space(5.0);
+
+        for (label, value) in record_rows(r) {
+            ui.label(format!("{label:<RECORD_LABEL_W$}{value}"));
+        }
+
+        ui.add_space(5.0);
+        ui.horizontal(|ui| {
+            ui.label(format!("{:<RECORD_LABEL_W$}", "RARITY"));
+            let filled = rarity_weight(&r.rarity);
+            let (resp, painter) = ui.allocate_painter(
+                Vec2::new(
+                    RARITY_SLOTS as f32 * (PIP_PX + PIP_GAP),
+                    PIP_PX + 2.0,
+                ),
+                Sense::hover(),
+            );
+            let y = (resp.rect.center().y - PIP_PX * 0.5).round();
+            for i in 0..RARITY_SLOTS {
+                let x = (resp.rect.min.x + i as f32 * (PIP_PX + PIP_GAP)).round();
+                let pip = Rect::from_min_size(Pos2::new(x, y), Vec2::splat(PIP_PX));
+                if i < filled {
+                    painter.rect_filled(pip, Rounding::ZERO, WHITE);
+                } else {
+                    painter.rect_stroke(pip, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+                }
+            }
+            ui.label(&r.rarity);
+        });
+
+        // Same rule as the parameter cell: what is left over becomes ornament rather
+        // than void, at a fixed low density that carries no measurement.
+        let rest = ui.available_size();
+        if rest.y > 10.0 {
+            let (resp, painter) = ui.allocate_painter(rest, Sense::hover());
+            dither_rect(&painter, resp.rect, 0.12, 3.0);
+        }
+    }
+
     /// The voice cell: the box types itself out, then holds. Clicking skips a
     /// reveal in progress, or advances to the next box once it has finished.
     fn draw_voice(&mut self, ui: &mut egui::Ui, now: f64, dt: f32) {
@@ -2646,6 +2978,16 @@ impl App {
             self.voice_revealed = 0;
             self.voice_credit = 0.0;
         }
+        // Each witness speaks in their own face. It is the one piece of characterisation
+        // a strict 1-bit interface can carry without a single new pixel of chrome, and
+        // it costs nothing at runtime: egui builds an atlas per family the first time
+        // one is asked for, and there are eleven.
+        let face = self
+            .relics
+            .get(self.relic)
+            .map(|r| face_for_archetype(&r.archetype))
+            .unwrap_or(UI_FACE);
+        let font = self.voice_font(ui, face);
         let chars: Vec<char> = self.voice_typing.chars().collect();
         self.voice_credit += dt;
         while self.voice_revealed < chars.len() {
@@ -2667,8 +3009,12 @@ impl App {
             self.voice_last_advance = now;
         }
         let visible: String = chars[..self.voice_revealed].iter().collect();
-        // The whole cell is the click target, not just the glyphs.
-        let resp = ui.interact(ui.max_rect(), ui.id().with("voice-box"), Sense::click());
+        // **The box does not answer the mouse** (Billy, 2026-08-05). Clicking used
+        // to generate the next entry, which made the cell a page-turner; the log now
+        // advances only on its own 45 s hold, so it reads as a record playing rather
+        // than something being flicked through. Nothing here takes a `Sense`, so a
+        // click passes straight through to whatever is behind it — which is nothing.
+        //
         // The entity speaks in inverted type. In strict 1-bit that is the whole
         // available vocabulary for "this is not a person talking", and it is the
         // same inversion the panel headers use, so it reads as the interface
@@ -2676,19 +3022,39 @@ impl App {
         if is_intrusion {
             let rect = ui.max_rect();
             ui.painter().rect_filled(rect, Rounding::ZERO, WHITE);
-            ui.label(egui::RichText::new(visible).color(BLACK));
+            ui.label(egui::RichText::new(visible).color(BLACK).font(font));
         } else {
-            ui.label(egui::RichText::new(visible).color(WHITE));
+            ui.label(egui::RichText::new(visible).color(WHITE).font(font));
         }
-        if resp.clicked() {
-            // A click always *generates*: the next box, typed from zero. The
-            // old behaviour skipped an in-progress reveal to its end, which
-            // hid the single thing this box exists to do — and since a box
-            // takes 9–11 s to type and then holds 45 s, skipping meant Billy
-            // never once saw it happen (2026-08-04).
-            self.pick_relic();
-            self.voice_last_advance = now;
+    }
+
+    /// The largest size on the ladder that the current entry fits the cell at.
+    ///
+    /// Measured against the **finished** text, not the part revealed so far — sizing
+    /// on the visible prefix would start every box at 32 px and shrink it mid-
+    /// sentence as the reveal outgrew the cell. The size is a property of the entry,
+    /// so it is settled before the first character lands and does not move again.
+    fn voice_font(&self, ui: &egui::Ui, face: &str) -> FontId {
+        let native = native_of(face);
+        let ppp = ui.ctx().pixels_per_point();
+        let avail = ui.max_rect().size();
+        let mut smallest = None;
+        for want in VOICE_PX {
+            let id = FontId::new(grid_size(want, native, ppp), family(face));
+            let height = ui.ctx().fonts(|f| {
+                f.layout(self.voice_typing.clone(), id.clone(), WHITE, avail.x)
+                    .size()
+                    .y
+            });
+            if height <= avail.y {
+                return id;
+            }
+            smallest = Some(id);
         }
+        // Nothing on the ladder fits: the entry is simply long. The bottom rung is
+        // still the right answer, and it is what the box used before there was a
+        // ladder at all.
+        smallest.unwrap_or_else(|| FontId::new(grid_size(16.0, native, ppp), family(face)))
     }
 }
 
@@ -2796,7 +3162,7 @@ impl eframe::App for App {
                 Self::header_chip(ui, &format!("{:02}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60));
                 ui.label(
                     egui::RichText::new("BLOW YOUR PHASE OFF")
-                        .font(FontId::monospace(16.0))
+                        .font(ui_font(ui.ctx(), 16.0))
                         .color(WHITE),
                 );
                 // Everything to the right of the title is placed first, so the
@@ -2812,7 +3178,7 @@ impl eframe::App for App {
                         ui.label(
                             egui::RichText::new(&self.rig.device_name)
                                 .color(WHITE)
-                                .font(FontId::monospace(11.0)),
+                                .font(ui_font(ui.ctx(), 11.0)),
                         );
                     })
                     .response
@@ -3188,17 +3554,24 @@ impl eframe::App for App {
             if self.portrait_area != area {
                 self.portrait_area = area;
                 self.push_log(format!(
-                    "portrait area {}x{} px. aspect {:.2}.",
+                    "cell z {}x{} px. aspect {:.2}.",
                     area.0,
                     area.1,
                     area.0 as f32 / area.1.max(1) as f32
                 ));
             }
-            // Cell Z is deliberately empty (Billy, 2026-08-04: "clear the zone").
-            // The portrait pipeline that filled it — dithered grids as animated
-            // point clouds, the scanline field, the fallback mark — is at HEAD if we
-            // want any of it back; the converter in `examples/png_to_grid.rs` and
-            // Billy's grids in `assets/portraits/` both survive untouched.
+            // Cell Z is the record card, across the whole zone (Billy, 2026-08-05:
+            // "its coverage can be the whole of that zblock"). The plinth shared it
+            // for about an hour; the portrait work is parked, and the drawing side
+            // of it — scanline field, point cloud, the turning mark — is in history
+            // at `52c5a99` and was restored from there once already, so getting it
+            // back is a known move rather than a rewrite. What stays here is the
+            // loading side: the grids, the parser and its format are Billy's assets
+            // and are correct whether or not anything draws them today.
+            ui.allocate_new_ui(
+                egui::UiBuilder::new().max_rect(cell_z.shrink(8.0)),
+                |ui| self.draw_record(ui),
+            );
             ui.allocate_new_ui(
                 egui::UiBuilder::new().max_rect(cell_w.shrink(8.0)),
                 |ui| self.draw_voice(ui, now, dt),
@@ -3306,7 +3679,7 @@ impl eframe::App for App {
                     ] {
                         ui.label(
                             egui::RichText::new(line)
-                                .font(FontId::monospace(10.0))
+                                .font(ui_font(ui.ctx(), 10.0))
                                 .color(WHITE),
                         );
                     }
@@ -3336,7 +3709,7 @@ fn main() -> eframe::Result<()> {
         "BLOW YOUR PHASE OFF",
         options,
         Box::new(|cc| {
-            install_font(&cc.egui_ctx);
+            install_fonts(&cc.egui_ctx);
             one_bit_style(&cc.egui_ctx);
             match App::new() {
                 Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
@@ -3646,23 +4019,27 @@ mod tests {
     #[test]
     fn portrait_grid_parses_any_converters_output() {
         for grid in [
-            "..##..\n.####.\n..##..",
             "  ##  \n #### \n  ##  ",
             "@@**@@\n@****@\n@@**@@",
-            "0011000011110000",
+            "  11    1111    ",
         ] {
             assert!(parse_portrait_grid(grid).is_some(), "failed to parse {grid:?}");
         }
-        let (w, h, pts) = parse_portrait_grid("..##..\n.####.\n..##..").unwrap();
+        let (w, h, pts) = parse_portrait_grid("  ##  \n #### \n  ##  ").unwrap();
         assert_eq!((w, h), (6, 3));
         assert_eq!(pts.len(), 2 + 4 + 2);
         // `#` is ink, so comments are `//` — the commonest ink character cannot
         // also be the comment marker.
-        let (_, h2, _) = parse_portrait_grid("// a face\n..##..\n.####.").unwrap();
+        let (_, h2, _) = parse_portrait_grid("// a face\n  ##  \n #### ").unwrap();
         assert_eq!(h2, 2, "the comment line was counted as a pixel row");
         // Blank padding is trimmed, so a converter's margin doesn't shrink the art.
-        let (_, h3, _) = parse_portrait_grid("\n\n..##..\n\n\n").unwrap();
+        let (_, h3, _) = parse_portrait_grid("\n\n  ##  \n\n\n").unwrap();
         assert_eq!(h3, 1);
+        // **Only a blank is empty.** `.` and `0` are ink like anything else, which
+        // is the whole of the 2026-08-05 fix: a portrait drawn in `0` used to read
+        // as 28 stray dots out of 749 marks.
+        let (_, _, dots) = parse_portrait_grid("..0..").unwrap();
+        assert_eq!(dots.len(), 5, "`.` and `0` must count as ink");
         // Ragged rows are fine: width is the longest.
         assert_eq!(parse_portrait_grid("#\n####\n##").unwrap().0, 4);
     }
@@ -3672,7 +4049,7 @@ mod tests {
     #[test]
     fn portrait_grid_rejects_what_it_cannot_draw() {
         assert!(parse_portrait_grid("").is_none(), "empty");
-        assert!(parse_portrait_grid("....\n....").is_none(), "no ink");
+        assert!(parse_portrait_grid("    \n    ").is_none(), "no ink");
         assert!(parse_portrait_grid("// only a comment").is_none());
         assert!(
             parse_portrait_grid(&"#".repeat(PORTRAIT_MAX_W + 1)).is_none(),
@@ -3797,7 +4174,7 @@ mod tests {
     /// content file in this project.
     #[test]
     fn portrait_grid_survives_windows() {
-        let (w, h, _) = parse_portrait_grid("\u{feff}..##..\r\n.####.\r\n").unwrap();
+        let (w, h, _) = parse_portrait_grid("\u{feff}  ##  \r\n #### \r\n").unwrap();
         assert_eq!((w, h), (6, 2), "BOM or CRLF leaked into the grid");
     }
 
@@ -4066,4 +4443,308 @@ mod tests {
         assert!(rarity_weight("") > 0);
     }
 
+    /// **The rule that Xilla broke, as a test.** Every face on the roster is on disk
+    /// and has its licence beside it. A font that arrives without its licence now
+    /// fails the suite instead of reaching a release, which is the only version of
+    /// this rule that survives being forgotten.
+    #[test]
+    fn every_face_ships_with_its_licence() {
+        for face in FACES {
+            let font = format!("fonts/{}/{}", face.slug, face.file);
+            assert!(
+                asset_path(&font).is_some(),
+                "{font} is on the roster but not on disk"
+            );
+            let licence = format!("fonts/{}/LICENSE.txt", face.slug);
+            assert!(
+                asset_path(&licence).is_some(),
+                "{} ships with no licence file — it must not be in the tree",
+                face.slug
+            );
+        }
+    }
+
+    /// No unlicensed face is reachable. `font.otf` was Xilla, loaded by name for the
+    /// whole design pass; the roster replaces it, and nothing should be able to
+    /// quietly restore a face that has no licence next to it.
+    #[test]
+    fn the_unlicensed_face_is_gone() {
+        for stray in ["font.otf", "font.ttf"] {
+            assert!(
+                asset_path(stray).is_none(),
+                "{stray} is back in assets — every face lives in fonts/<slug>/ with its licence"
+            );
+        }
+    }
+
+    /// Everyone Billy has written is cast. An archetype that matches nothing falls
+    /// back to the interface's own face, which is correct behaviour and invisible —
+    /// so the log itself is checked, or a new witness silently arrives unvoiced.
+    #[test]
+    fn every_witness_in_the_log_has_a_face() {
+        let relics = load_relics();
+        assert!(!relics.is_empty(), "relic_log.json did not load");
+        for r in &relics {
+            let face = face_for_archetype(&r.archetype);
+            assert_ne!(
+                face, UI_FACE,
+                "'{}' is not in the VOICES table — it would speak in the interface's face",
+                r.archetype
+            );
+            assert!(
+                FACES.iter().any(|f| f.slug == face),
+                "'{}' maps to '{face}', which is not on the roster",
+                r.archetype
+            );
+        }
+    }
+
+    /// The Monk is written with a **non-breaking hyphen** — U+2011, identical on
+    /// screen to `-` and never equal to it. This is the case that would have looked
+    /// like a font bug for as long as it took someone to paste the string into a hex
+    /// dump, so it is pinned by character code rather than by copied text.
+    #[test]
+    fn punctuation_never_decides_who_speaks() {
+        let monk = "Shell\u{2011}Listening Monk";
+        assert_eq!(face_for_archetype(monk), "scriptorium");
+        assert_eq!(face_for_archetype("Shell-Listening Monk"), "scriptorium");
+        // The whole dash family folds, and case never matters.
+        assert_eq!(face_for_archetype("SHELL\u{2013}LISTENING MONK"), "scriptorium");
+        // A prefix match, so every A–H intrusion finds the entity.
+        for tag in ["", " A", " H"] {
+            assert_eq!(face_for_archetype(&format!("Logalith Intrusion{tag}")), FALLBACK_FACE);
+        }
+        // And an unwritten archetype is unattributed rather than mis-attributed.
+        assert_eq!(face_for_archetype("Night Porter"), UI_FACE);
+    }
+
+    /// **Every grid in the portraits folder actually loads, and carries a figure.**
+    ///
+    /// Both halves of this caught a real failure on 2026-08-05. Nine of the ten
+    /// portraits in Billy's second batch were 98–120 wide against a cap of 96 and
+    /// were refused outright; four more used `0` or `.` as a tone, which the parser
+    /// then read as background — one of them ending up 28 marks out of 749. Neither
+    /// failure says anything at runtime: a rejected or hollowed-out portrait just
+    /// falls back to the turning shell mark, which looks exactly like art that has
+    /// not been drawn yet.
+    #[test]
+    fn every_portrait_on_disk_parses_and_carries_a_figure() {
+        let dir = asset_dirs()
+            .into_iter()
+            .map(|d| d.join("portraits"))
+            .find(|d| d.is_dir())
+            .expect("the portraits folder");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("txt") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            // Billy's source bundle — ten portraits in one file behind `/name`
+            // markers. Working material, split into the grids beside it; the
+            // instrument never loads it.
+            if name.starts_with("zboxtxt") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let (w, h, pts) = parse_portrait_grid(&text).unwrap_or_else(|| {
+                panic!("{name} does not parse — it would silently fall back to the mark")
+            });
+            let ink = pts.len() as f32 / (w * h).max(1) as f32;
+            assert!(
+                ink > 0.03,
+                "{name} is {:.1}% ink at {w}×{h} — a figure that sparse is a format \
+                 mismatch, not a drawing",
+                ink * 100.0
+            );
+            checked += 1;
+        }
+        // Zero is a valid answer, and it is what a fresh clone sees: the grids are
+        // derivatives of source images whose licence is not established, so they are
+        // deliberately never committed — the same discipline that makes Xilla a
+        // release blocker, applied to pictures. On Billy's machine this checks the
+        // real folder; anywhere else it correctly checks nothing.
+        eprintln!("portrait grids checked: {checked}");
+    }
+
+    /// The record card is the same shape for every entry. Most of the log carries no
+    /// `tstamp`, `alias` or `extra`, so a card that rendered only what it had would
+    /// resize itself every time the voice advanced — a panel twitching every 45
+    /// seconds reads as a bug, and a form with a blank line reads as a record.
+    #[test]
+    fn the_record_card_never_changes_shape() {
+        let bare = Relic {
+            id: "1".into(),
+            archetype: "Survivor".into(),
+            era: String::new(),
+            rarity: "rare".into(),
+            avatar: String::new(),
+            metadata: RelicMeta::default(),
+            log: vec!["x".into()],
+            intrusion: Vec::new(),
+        };
+        let full = Relic {
+            era: "  1987  ".into(),
+            metadata: RelicMeta {
+                tstamp: "1987-04-12::14:03".into(),
+                alias: "op1_reboot".into(),
+                extra: "φ-index strobe 0.665".into(),
+            },
+            ..bare.clone()
+        };
+        let (a, b) = (record_rows(&bare), record_rows(&full));
+        assert_eq!(a.len(), b.len());
+        for (i, ((la, va), (lb, vb))) in a.iter().zip(b.iter()).enumerate() {
+            assert_eq!(la, lb, "row {i} changed its label");
+            assert!(!va.is_empty() && !vb.is_empty(), "row {i} rendered as nothing");
+        }
+        // Blank fields are marked, not omitted; present ones are trimmed.
+        assert!(a.iter().all(|(_, v)| v == NOT_RECORDED));
+        assert_eq!(b[0].1, "1987");
+        assert_eq!(b[3].1, "φ-index strobe 0.665");
+        // And every entry Billy has actually written renders.
+        for r in load_relics() {
+            assert!(record_rows(&r).iter().all(|(_, v)| !v.is_empty()));
+        }
+    }
+
+    /// Rarity pips can never outrun the row they are drawn in. The pip strip
+    /// allocates exactly `RARITY_SLOTS` cells, so a rarity weighted heavier than
+    /// eight would paint outside its own rect and over whatever sits beside it —
+    /// which is the kind of thing that looks like a rendering bug rather than a
+    /// data one.
+    #[test]
+    fn rarity_pips_fit_their_row() {
+        let mut seen = vec!["common", "uncommon", "rare", "very_rare", "", "legendary"];
+        let relics = load_relics();
+        seen.extend(relics.iter().map(|r| r.rarity.as_str()));
+        for rarity in seen {
+            let w = rarity_weight(rarity);
+            assert!(
+                w <= RARITY_SLOTS,
+                "rarity '{rarity}' weighs {w}, which overflows a {RARITY_SLOTS}-pip row"
+            );
+            assert!(w > 0, "rarity '{rarity}' would draw no pips at all");
+        }
+    }
+
+    /// Where the voice ladder actually lands on Billy's log.
+    ///
+    /// "Most boxes have room at 32 and the long ones don't" is a claim about *his
+    /// text*, not about the code, so it is measured against the real entries at the
+    /// real cell size rather than asserted in a comment. The bound is deliberately
+    /// loose — this fails when the log changes shape enough to matter, not when a
+    /// sentence gains a word.
+    #[test]
+    fn the_voice_ladder_lands_where_it_says() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(font_definitions());
+        // egui builds its atlases on the first frame and refuses to lay anything out
+        // before one has run, so this drives an empty one.
+        let _ = ctx.run(Default::default(), |_| {});
+        // Cell W at the shipped 1180×780 window, less its padding.
+        let avail = Vec2::new(780.0, 250.0);
+        let (mut large, mut small) = (0, 0);
+        for r in load_relics() {
+            let text = if r.is_pure_intrusion() {
+                r.intrusion.join("\n")
+            } else {
+                r.log.join("\n")
+            };
+            let face = face_for_archetype(&r.archetype);
+            let fits = |want: f32| {
+                let id = FontId::new(grid_size(want, native_of(face), 1.0), family(face));
+                ctx.fonts(|f| f.layout(text.clone(), id, WHITE, avail.x).size().y) <= avail.y
+            };
+            if fits(VOICE_PX[0]) {
+                large += 1;
+            } else {
+                small += 1;
+            }
+        }
+        assert!(large + small >= 25, "the log did not load");
+        assert!(
+            large > 0,
+            "no entry fits the top rung — the ladder is decorative and the box never \
+             gets bigger than it was"
+        );
+        assert!(
+            small > 0,
+            "every entry fits at {}px, so the bottom rung is dead weight — either the \
+             ladder wants another rung above it or the cell grew",
+            VOICE_PX[0]
+        );
+        eprintln!("voice ladder: {large} entries at the top rung, {small} at the bottom");
+    }
+
+    /// Every family the program can ask for is registered and resolves to real font
+    /// data. An unregistered `FontFamily::Name` panics inside egui's layout, so the
+    /// failure would be a crash on whichever launch first rolled an uncast witness —
+    /// which is to say, not on the launch that shipped it.
+    #[test]
+    fn every_family_the_program_can_ask_for_exists() {
+        let fonts = font_definitions();
+        let asked: Vec<egui::FontFamily> = FACES
+            .iter()
+            .map(|f| family(f.slug))
+            .chain([
+                family(UI_FACE),
+                family(FALLBACK_FACE),
+                egui::FontFamily::Monospace,
+                egui::FontFamily::Proportional,
+            ])
+            // Every face any archetype in the log can select, by the same route the
+            // voice box takes.
+            .chain(load_relics().iter().map(|r| family(face_for_archetype(&r.archetype))))
+            .collect();
+        for fam in asked {
+            let chain = fonts
+                .families
+                .get(&fam)
+                .unwrap_or_else(|| panic!("{fam:?} is never registered — layout would panic"));
+            assert!(!chain.is_empty(), "{fam:?} resolves to nothing");
+            for name in chain {
+                assert!(
+                    fonts.font_data.contains_key(name),
+                    "{fam:?} names '{name}', which has no font data"
+                );
+            }
+        }
+        // And the fallback really is underneath the others, not merely present.
+        for face in FACES.iter().filter(|f| f.slug != FALLBACK_FACE) {
+            let chain = &fonts.families[&family(face.slug)];
+            assert_eq!(chain.first().map(String::as_str), Some(face.slug));
+            assert!(
+                chain.iter().any(|n| n == FALLBACK_FACE),
+                "{} has no fallback — a glyph it lacks would be a tofu box",
+                face.slug
+            );
+        }
+    }
+
+    /// A pixel face is only ever asked for at a whole multiple of its own grid, in
+    /// **device** pixels — including on a scaled display, which is where the naive
+    /// version silently fails. A face with no grid is left exactly as asked.
+    #[test]
+    fn type_lands_on_the_pixel_grid() {
+        for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
+            for want in [9.0_f32, 10.0, 11.0, 12.0, 15.0, 16.0, 18.0] {
+                for native in [9.0_f32, 16.0] {
+                    let got = grid_size(want, Some(native), ppp);
+                    let device = got * ppp;
+                    let k = device / native;
+                    assert!(
+                        (k - k.round()).abs() < 1e-4,
+                        "{want} at ppp {ppp} on a {native} px grid gave {device} device px"
+                    );
+                    assert!(k >= 1.0, "a size must never round away to nothing");
+                    // Nearest multiple: never more than half a grid step off.
+                    assert!((device - want * ppp).abs() <= native * 0.5 + 1e-4);
+                }
+            }
+        }
+        assert_eq!(grid_size(12.0, None, 1.0), 12.0);
+        assert_eq!(grid_size(12.0, None, 1.75), 12.0);
+    }
 }

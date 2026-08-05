@@ -746,25 +746,44 @@ Panels:
   is the same inversion the panel headers use, so it reads as the interface itself
   seizing the channel. The plinth holds the current speaker's portrait, reloaded the
   moment the speaker changes.
-- **The portraits** (`assets/portraits/*.txt`): the plinth draws a **point cloud**,
-  not an image. Each portrait is a dithered 1-bit grid stored as text — space, `.`
-  and `0` empty, anything else ink, `//` for comments — and every inked cell becomes
-  a point. 64×80 is the working size and 96×120 the cap, because the cloud is
-  redrawn every frame: 64×80 lands ≈2,150 points, the same order as the shell's
-  stroke count.
+- **The portraits** (`assets/portraits/*.txt`) — **the art is loaded; the plinth
+  that drew it is parked.** Cell Z is the record card, so nothing renders these
+  today; the grids, the parser, the frame sets and the hot-reload all stand, and the
+  drawing side (scanline field, animated point cloud, turning shell mark) is at
+  `52c5a99` and has been lifted back out of there once already.
 
-  Text rather than PNG **because points animate and rasters don't** — a raster can
-  only be moved as a block in whole pixels, while every point here moves
-  independently. Three motions: each point breathes on a phase hashed from its own
-  position, so the cloud shimmers like a printout being read rather than sliding as
-  one sheet; a scan band crosses every 7 s, nudging the points it passes; and the
-  whole cloud scatters outward with **agitation**, so the record is disturbed by the
-  thing it is a record of. Empty cells leave the scanline field showing through,
-  which is what makes a figure stand on stripes.
+  Each portrait is a dithered 1-bit grid stored as text — **only a space is empty**,
+  anything else is ink, `//` for comments — and every inked cell becomes a point
+  rather than a pixel, because points animate and rasters don't. 64×80 is the
+  working size and 128×120 the cap: 64×80 lands ≈2,150 points, the same order as the
+  shell's stroke count, and the cloud is redrawn every frame when it is drawn at
+  all.
 
-  Eleven of them, listed with filenames in `assets/portraits/README.md`; the
-  Aseprite exporter and workflow are in `tools/aseprite/`. A missing file shows a
-  turning shell mark instead, so they can be done in any order.
+  Both of those numbers are scars. `.` and `0` counted as empty until 2026-08-05,
+  when a batch of art arrived using `0` as its darkest tone: one portrait came in at
+  99×51 with 721 zeros and 28 other marks, and drew as two dozen scattered dots. The
+  width cap was 96 in the same batch, and **nine of ten portraits were 98–120 wide
+  and refused outright.** Neither failure says anything at runtime — a rejected or
+  hollowed-out grid falls back to the shell mark, which is indistinguishable from
+  art nobody has drawn yet. So the rule is now the narrowest one that cannot be
+  misread (*whatever is not blank, is there*), the cap is set from measurement
+  rather than habit, and a test parses every grid in the folder and fails on any
+  that is under 3% ink. The fourteen grids from the first batch used `.` as
+  background with no spaces at all and were migrated in the same pass; their point
+  counts came through identical.
+
+  What the plinth did with them, for whenever it comes back: three motions, each
+  point breathing on a phase hashed from its own position so the cloud shimmers like
+  a printout being read rather than sliding as one sheet; a scan band crossing every
+  7 s, nudging the points it passes; and the whole cloud scattering outward with
+  **agitation**, so the record is disturbed by the thing it is a record of. Empty
+  cells left the scanline field showing through, which is what made a figure stand
+  on stripes.
+
+  Eleven slots, listed with filenames and current status in
+  `assets/portraits/README.md`; the Aseprite exporter and workflow are in
+  `tools/aseprite/`. Five are filled. Four more are delivered but unassigned, and
+  three are characters the relic log has never heard of — both are Billy's calls.
 
   Voice ordering is the **one piece of nondeterminism in the program** — its PRNG is
   seeded from the clock at startup, so the log does not recite itself in the same
@@ -784,10 +803,91 @@ Panels:
   a hash rather than a clock or an RNG, so a given box types with exactly the
   same rhythm every time it comes round. A box of Billy's takes 9–11 s.
 
-  **Clicking always generates**: it advances to the next box and types it
-  from zero. There is deliberately no skip-to-end — a box types for ~10 s and
-  then holds for 45, so a skip meant the one thing the box exists to do was
-  the one thing you never saw.
+  **The box does not answer the mouse.** Clicking used to generate the next entry;
+  that was removed on 2026-08-05 (Billy) because it made the cell a page-turner. The
+  log now advances only on its own 45 s hold, so it reads as a record playing rather
+  than something being flicked through. Nothing in the cell takes a `Sense`, so a
+  click passes straight through.
+
+  **Its size is a ladder, largest first: 32 px, then 16.** The box is drawn at the
+  biggest rung its *finished* entry fits the cell at — measured against the whole
+  text, not the part revealed so far, or the type would start large and shrink
+  mid-sentence as the reveal outgrew the box. Two rungs and no more because these
+  are pixel faces: ten of the twelve are on a 16 px grid, so **between 16 and 32
+  there is no size at all**, and a request for 24 just rounds to one of them. On
+  Billy's log as it stands that lands **17 entries at 32 px and 13 at 16** — the long
+  ones, which at 32 would wrap past twice the height of the cell. A test measures
+  that split against the real entries rather than trusting the estimate, and fails if
+  either rung stops being used.
+- **The record card** (cell Z, the whole zone): the found-document furniture for
+  whoever is speaking in W — `RELIC <id>` on an inverted strip, then the archetype
+  **in that character's own face**, then `ERA`, `TSTAMP`, `ALIAS`, `EXTRA` in a
+  fixed label column, then rarity as pips. It reads the same relic the voice box
+  reads, so the card and the words can never disagree about who is talking.
+
+  **The rows never change shape.** `tstamp`, `alias` and `extra` are optional by
+  design — that is what keeps adding a line to the log down to four lines of JSON —
+  so most entries have none of them. A card that rendered only the fields it had
+  would resize itself every time the voice advanced, and a panel twitching every 45
+  seconds reads as a glitch; a form with an unfilled line reads as a record, so a
+  blank field shows `——` and holds its place.
+
+  **Rarity is drawn as pips, out of eight**, filled to the entry's own selection
+  weight. The weights are already the answer to "how often will I see this" — 8, 5,
+  3, 1, Fibonacci — so a full row is the commonest thing in the log and a single pip
+  the rarest. They are drawn as squares rather than typed as bullets, for the same
+  reason the window buttons are drawn: a glyph can fall back to another face's idea
+  of `•`. Eight slots is also a hard bound, and a test enforces it — a rarity
+  weighted heavier than eight would paint outside its own rect and over whatever sat
+  beside it, which looks like a rendering bug rather than the data error it is.
+
+  The zone is 574×412, aspect 1.39; the app logs its own figure on startup and on
+  resize, because the panels are content-sized and the only honest answer to "how
+  big is it" is the running app's measurement.
+- **The type roster** (`assets/fonts/<slug>/`): twelve licensed faces, each beside
+  its own `LICENSE.txt`, with roles and credits in `fonts/NOTICE.md`. **Every witness
+  speaks in their own face** — the Overworked Acoustic Engineer in Modern DOS, the
+  Archivist Historian in PixAntiqua, the Shell-Listening Monk in Scriptorium, the
+  Logalith itself in Unifont. It is the one piece of characterisation strict 1-bit
+  can carry without a single new pixel of chrome.
+
+  The archetype in `relic_log.json` selects the face, matched on a **normalised
+  prefix**: the dash family folds to `-` and case is ignored, so `Logalith
+  Intrusion F` finds the entity and the Monk — whose name is written with a
+  non-breaking hyphen, U+2011, indistinguishable on screen from `-` and never equal
+  to it — finds Scriptorium. An archetype nobody has cast yet speaks in the
+  interface's own face, which reads as unattributed rather than as somebody else.
+
+  **Unifont Ex Mono sits beneath every face** as the fallback. It is the only one
+  here with complete coverage of φ ρ π Δ • ◦ ¤ and the subscripts, and it carries
+  most of the BMP besides, so a glyph its neighbour lacks resolves to a real glyph
+  instead of a tofu box. That it is also what the Logalith speaks in is not a
+  coincidence.
+
+  **Sizes land on the pixel grid.** These are bitmap faces, and a face drawn on a
+  16 px grid rendered at 20 doubles every fifth column — the same failure
+  `feathering = false` exists to prevent, applied to letterforms instead of edges.
+  Each face's grid is *measured*, not assumed: every coordinate in a bitmap face is
+  a multiple of one step, so the GCD of its outlines **is** that step and
+  `units_per_em / step` is its native height. Ten of the twelve measure 16 px, the
+  two Pixeloids 9, and PixAntiqua shares no common step at all, so it is free at any
+  size. Modern DOS is 16 despite being named 8x16 — the 8 is its width, which is the
+  kind of thing only measuring settles. `examples/font_probe.rs` reports the grid,
+  the embedded licence and the glyph coverage of any face; run it before proposing
+  one, not after.
+
+  A request is rounded to the nearest whole multiple of the face's grid **in device
+  pixels**, because egui rasterises at `size × pixels_per_point` — so on a 125 %
+  display, asking for 16 gets 20 device pixels and asking for 12.8 gets exactly 16.
+  A coarse grid cannot honour every request, and pretending otherwise is what makes
+  pixel type look muddy. The voice box asks for 32 and settles for 16; the interface asks for the sizes
+  it always asked for and gets the nearest ones its face can actually be drawn at.
+
+  **A face with no licence file never enters the folder, and only what is in the
+  folder can load** — the rule that the old single unlicensed `font.otf` broke, and
+  the reason two tests now fail the suite rather than a release: one checks every
+  face on the roster is on disk *with* its licence, the other that no bare
+  `font.otf`/`font.ttf` has come back.
 
 ### Roadmap
 
@@ -799,3 +899,34 @@ Panels:
    (design pass in progress — see DESIGN.md)
 4. Preset save/load; algorithm roster growth to 8 (then 13); WASAPI
    exclusive mode / ASIO if latency demands it; the 11 avatar PNGs (Billy)
+
+### ⚑ Before this repository is made public
+
+**The git history still contains an unlicensed font.** Xilla was the UI face for the
+whole design pass, committed as `crates/fibonacci-gui/assets/font.otf` in `0419ee7`
+(3 Aug 2026) and carried in every tree from there to the font swap. The working tree
+is clean — the twelve-face roster replaced it and the file is deleted — but **deleting
+a file does not remove it from history, and publishing the repository publishes the
+font.**
+
+Billy's decision (2026-08-05): a private repo is not an exposure, so the rewrite is
+**deferred rather than done**. It becomes required the moment publication is on the
+table, and it has to happen *before* the repo flips, not after.
+
+What it takes, if that day comes:
+
+- One blob, `b0feb582647dd9eb951331d1c2157739a680f5b6`, 7,424 bytes, at one path that
+  never moved. Rewriting strips it from **30 of the 33 commits**; `0419ee7` also
+  touched `DESIGN.md` and `main.rs`, so it survives the pass rather than being pruned.
+- `git-filter-repo` is the right tool and needs a Python install; `git filter-branch
+  --index-filter` is built in and is safe at this scale — one path, one linear branch,
+  123 KiB.
+- **A force-push does not purge GitHub.** Unreachable objects stay fetchable by SHA
+  until GitHub garbage-collects. Deleting the repo and pushing the rewritten history
+  to a fresh one is the only move that is immediate and complete.
+- Every hash from `0419ee7` onward changes, so any other clone must be re-cloned
+  rather than pulled.
+
+The same rule applies to anything else that reaches history: `assets/fonts/<slug>/`
+is gated on a `LICENSE.txt` and two tests enforce it, but the loose `.jpg` sources
+and `docs/` in the working tree are deliberately untracked for exactly this reason.

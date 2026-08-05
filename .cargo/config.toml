@@ -1,0 +1,31 @@
+# Faster edit/build/run loop on Windows.
+#
+# Swaps the default MSVC `link.exe` for LLVM's `lld-link.exe`, which is a
+# drop-in, flag-compatible replacement. Reported gains are roughly 2x on
+# full builds and up to 5x on incremental ones (i.e. "I touched one function
+# in main.rs and want to see it") — the case that matters most here.
+#
+# Does NOT touch codegen, optimization, or anything DSP-related: the
+# [profile.dev] opt-level = 2 in the workspace Cargo.toml (needed so a bare
+# `cargo run` still sounds right) is untouched and unaffected by this file.
+# Purely a link-step swap.
+#
+# Prerequisite (one-time): LLVM. It is ALREADY INSTALLED on this machine —
+# LLD 22.1.8 at C:\Program Files\LLVM\bin — but it was installed WITHOUT the
+# "add to PATH" option, so `where lld-link.exe` finds nothing and the portable
+# form of this file (`linker = "lld-link.exe"`) fails every build with
+#   error: linker `lld-link.exe` not found
+# Verified 2026-08-05, not assumed: neither the user nor the machine persisted
+# Path contains an LLVM entry, so a fresh terminal does not fix it either.
+#
+# Hence the absolute path below. To go back to the portable one-liner, add
+# C:\Program Files\LLVM\bin to PATH and swap the two lines at the bottom.
+#
+# If a build ever produces linker errors that weren't there before, comment
+# out the `linker` line to fall back to the default MSVC linker while you
+# investigate — lld-link is described as "not bug-for-bug compatible with
+# link.exe" for edge cases, though the vast majority of projects are fine.
+
+[target.x86_64-pc-windows-msvc]
+linker = 'C:\Program Files\LLVM\bin\lld-link.exe'
+# linker = "lld-link.exe"   # use this once LLVM's bin is on PATH

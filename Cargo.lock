@@ -1256,6 +1256,7 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+ "ttf-parser",
 ]
 
 [[package]]
