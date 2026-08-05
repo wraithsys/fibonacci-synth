@@ -431,6 +431,19 @@ fn mode_name(mode: RatioMode) -> &'static str {
 
 const ROMAN: [&str; 5] = ["I", "II", "III", "IV", "V"];
 
+/// Which presets-pane control is one activation away from firing. The pane's
+/// double-usage principle (Billy's sweep, 2026-08-05): a first activation
+/// *selects* — the outline goes to a dotted bevel — and only repeating the
+/// same activation confirms it. Nothing in the pane fires on a single press.
+/// The highlighted preset is tracked separately (`preset_selected`), because
+/// DELETE acts on it and must not steal its highlight while arming.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaneArm {
+    None,
+    Save,
+    Delete,
+}
+
 fn rebuild(old: &Patch, algorithm_index: usize, mode: RatioMode) -> Patch {
     let mut p = Patch::init(ALGORITHMS[algorithm_index], mode);
     for (new_op, old_op) in p.ops.iter_mut().zip(old.ops.iter()) {
@@ -1700,8 +1713,14 @@ struct App {
     portrait_avatar: String,
     frame_count: u64,
     drone_hz: f32,
+    /// One text, two duties: it filters the bank live and it names a save.
     preset_name: String,
     preset_names: Vec<String>,
+    /// The header pane's visibility. Not persisted.
+    presets_open: bool,
+    /// The single highlighted preset — at most one, ever.
+    preset_selected: Option<String>,
+    preset_armed: PaneArm,
     restored: bool,
 }
 
@@ -1763,6 +1782,9 @@ impl App {
             drone_hz: state.drone_hz,
             preset_name: String::new(),
             preset_names: scan_presets(),
+            presets_open: false,
+            preset_selected: None,
+            preset_armed: PaneArm::None,
             restored,
         };
         if app.restored {
@@ -1865,7 +1887,11 @@ impl App {
         }
     }
 
-    fn save_preset(&mut self, name: &str) {
+    /// Writes the current state under `name` and returns what was actually
+    /// written. Never overwrites: a taken name gets `~X` appended (Billy's
+    /// sweep, 2026-08-05) until one is free, so the only way to lose a preset
+    /// is DELETE's own double confirmation.
+    fn save_preset(&mut self, name: &str) -> Option<String> {
         let file: String = name
             .chars()
             .map(|c| {
@@ -1879,18 +1905,47 @@ impl App {
         let dir = preset_dir();
         if std::fs::create_dir_all(&dir).is_err() {
             self.push_log("preset directory could not be created.".into());
-            return;
+            return None;
         }
-        let path = dir.join(format!("{file}.json"));
+        let mut written = file.clone();
+        let mut x = 1;
+        while dir.join(format!("{written}.json")).exists() {
+            written = format!("{file}~{x}");
+            x += 1;
+        }
+        let path = dir.join(format!("{written}.json"));
         match serde_json::to_string_pretty(&self.current_state()) {
             Ok(json) => match std::fs::write(&path, json) {
                 Ok(()) => {
                     self.preset_names = scan_presets();
-                    self.push_log(format!("preset '{file}' written."));
+                    self.push_log(format!("preset '{written}' written."));
+                    Some(written)
                 }
-                Err(e) => self.push_log(format!("preset write failed: {e}.")),
+                Err(e) => {
+                    self.push_log(format!("preset write failed: {e}."));
+                    None
+                }
             },
-            Err(e) => self.push_log(format!("preset serialize failed: {e}.")),
+            Err(e) => {
+                self.push_log(format!("preset serialize failed: {e}."));
+                None
+            }
+        }
+    }
+
+    /// Removes a preset file. Only reachable through the pane's double
+    /// confirmation, and only ever the highlighted preset.
+    fn delete_preset(&mut self, name: &str) {
+        let path = preset_dir().join(format!("{name}.json"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.preset_names = scan_presets();
+                if self.preset_selected.as_deref() == Some(name) {
+                    self.preset_selected = None;
+                }
+                self.push_log(format!("preset '{name}' deleted."));
+            }
+            Err(e) => self.push_log(format!("preset delete failed: {e}.")),
         }
     }
 
@@ -2675,6 +2730,61 @@ impl App {
             });
     }
 
+    /// A 2×2 px dot every 4 px around the rect — the pane's "dotted bevel",
+    /// the *selected* state of the double-usage principle. Dots, not dashes:
+    /// with feathering off a dash needs sub-pixel care, a dot is a square.
+    fn dotted_rect(p: &egui::Painter, r: Rect, color: Color32) {
+        const STEP: f32 = 4.0;
+        const DOT: f32 = 2.0;
+        let dot = |p: &egui::Painter, x: f32, y: f32| {
+            p.rect_filled(
+                Rect::from_min_size(Pos2::new(x.round(), y.round()), Vec2::splat(DOT)),
+                Rounding::ZERO,
+                color,
+            );
+        };
+        let mut x = r.min.x;
+        while x <= r.max.x - DOT {
+            dot(p, x, r.min.y);
+            dot(p, x, r.max.y - DOT);
+            x += STEP;
+        }
+        let mut y = r.min.y;
+        while y <= r.max.y - DOT {
+            dot(p, r.min.x, y);
+            dot(p, r.max.x - DOT, y);
+            y += STEP;
+        }
+    }
+
+    /// One control of the presets pane, in the double-usage language: plain =
+    /// 1 px outline, hover = 2 px (the app-wide thicken), selected/armed =
+    /// dotted bevel, and the *confirming* press inverts the box until release
+    /// — the only inverted state, so a lit box always means "this fires when
+    /// you let go".
+    fn pane_button(ui: &mut egui::Ui, text: &str, armed: bool) -> egui::Response {
+        let font = ui_font(ui.ctx(), 12.0);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), WHITE);
+        let (rect, resp) =
+            ui.allocate_exact_size(galley.size() + Vec2::new(14.0, 8.0), Sense::click());
+        if ui.is_rect_visible(rect) {
+            let pressed = armed && resp.is_pointer_button_down_on();
+            let (bg, fg) = if pressed { (WHITE, BLACK) } else { (BLACK, WHITE) };
+            let p = ui.painter();
+            p.rect_filled(rect, Rounding::ZERO, bg);
+            if armed {
+                Self::dotted_rect(p, rect, fg);
+            } else {
+                let w = if resp.hovered() { 2.0_f32 } else { 1.0_f32 };
+                p.rect_stroke(rect, Rounding::ZERO, Stroke::new(w, WHITE));
+            }
+            p.text(rect.center(), egui::Align2::CENTER_CENTER, text, font, fg);
+        }
+        resp
+    }
+
     fn inverted_strip(ui: &mut egui::Ui, text: &str) {
         egui::Frame::none().fill(WHITE).inner_margin(4.0).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -2794,6 +2904,110 @@ impl App {
         let x = (inner.max.x - shift).round();
         painter.galley(Pos2::new(x, y), galley.clone(), WHITE);
         painter.galley(Pos2::new(x + period, y), galley, WHITE);
+    }
+
+    /// The presets pane (Billy's sweep, 2026-08-05): a toggleable window
+    /// hanging under the header chip. One text field both filters the bank
+    /// live and names a save; SAVE and DELETE sit beside it; the bank lists
+    /// beneath. Everything speaks the double-usage language of
+    /// [`Self::pane_button`] — click a preset to highlight it, click it again
+    /// to load it; ENTER selects SAVE, ENTER again writes; DELETE (its own
+    /// double confirmation) removes the highlighted preset. Nothing fires on
+    /// a single press.
+    fn draw_presets_pane(&mut self, ctx: &egui::Context) {
+        egui::Window::new("PRESETS")
+            .title_bar(false)
+            .resizable(false)
+            .movable(false)
+            .anchor(Align2::RIGHT_TOP, Vec2::new(-6.0, 34.0))
+            .fixed_size(Vec2::new(340.0, 300.0))
+            .frame(
+                egui::Frame::none()
+                    .fill(BLACK)
+                    .stroke(Stroke::new(2.0_f32, WHITE))
+                    .inner_margin(6.0),
+            )
+            .show(ctx, |ui| {
+                Self::window_chrome(ui, "PRESETS");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let te = ui.add(
+                        egui::TextEdit::singleline(&mut self.preset_name)
+                            .hint_text("search / name")
+                            .desired_width(190.0),
+                    );
+                    if te.changed() {
+                        // An edited name is a new intent: disarm.
+                        self.preset_armed = PaneArm::None;
+                    }
+                    let enter =
+                        te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let save =
+                        Self::pane_button(ui, "SAVE", self.preset_armed == PaneArm::Save);
+                    let delete =
+                        Self::pane_button(ui, "DELETE", self.preset_armed == PaneArm::Delete);
+                    if enter || save.clicked() {
+                        let name = self.preset_name.trim().to_string();
+                        if name.is_empty() {
+                            self.push_log("a preset needs a name.".into());
+                            self.preset_armed = PaneArm::None;
+                        } else if self.preset_armed == PaneArm::Save {
+                            self.preset_armed = PaneArm::None;
+                            if let Some(written) = self.save_preset(&name) {
+                                self.preset_selected = Some(written);
+                            }
+                        } else {
+                            self.preset_armed = PaneArm::Save;
+                        }
+                        if enter {
+                            // ENTER surrenders focus; take it back so the
+                            // second ENTER lands in the same box.
+                            te.request_focus();
+                        }
+                    }
+                    if delete.clicked() {
+                        match (self.preset_selected.clone(), self.preset_armed) {
+                            (None, _) => {
+                                self.push_log("no preset highlighted to delete.".into());
+                                self.preset_armed = PaneArm::None;
+                            }
+                            (Some(name), PaneArm::Delete) => {
+                                self.preset_armed = PaneArm::None;
+                                self.delete_preset(&name);
+                            }
+                            (Some(_), _) => self.preset_armed = PaneArm::Delete,
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                let query = self.preset_name.trim().to_lowercase();
+                let names: Vec<String> = self
+                    .preset_names
+                    .iter()
+                    .filter(|n| query.is_empty() || n.to_lowercase().contains(&query))
+                    .cloned()
+                    .collect();
+                if names.is_empty() {
+                    ui.label(if self.preset_names.is_empty() {
+                        "no presets saved."
+                    } else {
+                        "nothing matches."
+                    });
+                }
+                egui::ScrollArea::vertical().max_height(230.0).show(ui, |ui| {
+                    for name in names {
+                        let selected = self.preset_selected.as_deref() == Some(name.as_str());
+                        if Self::pane_button(ui, &name, selected).clicked() {
+                            if selected {
+                                self.load_preset(&name);
+                            } else {
+                                self.preset_selected = Some(name.clone());
+                                self.preset_armed = PaneArm::None;
+                            }
+                        }
+                    }
+                });
+            });
     }
 
     /// How long the reveal dwells on character `i`, in seconds.
@@ -3210,6 +3424,20 @@ impl eframe::App for App {
                                 .color(WHITE)
                                 .font(ui_font(ui.ctx(), 11.0)),
                         );
+                        // The presets chip: the one functional control in the
+                        // header, inverted while its pane hangs open.
+                        let open = self.presets_open;
+                        let chip = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("presets")
+                                    .color(if open { BLACK } else { WHITE }),
+                            )
+                            .fill(if open { WHITE } else { BLACK })
+                            .stroke(Stroke::new(1.0_f32, WHITE)),
+                        );
+                        if chip.clicked() {
+                            self.presets_open = !self.presets_open;
+                        }
                     })
                     .response
                     .rect;
@@ -3223,6 +3451,10 @@ impl eframe::App for App {
                 }
             });
         });
+
+        if self.presets_open {
+            self.draw_presets_pane(ctx);
+        }
 
         egui::SidePanel::left("stats").exact_width(195.0).show(ctx, |ui| {
             Self::inverted_strip(ui, "THE TREE");
@@ -3507,31 +3739,6 @@ impl eframe::App for App {
             if verb_changed {
                 self.send_verb();
             }
-            ui.add_space(6.0);
-            Self::inverted_strip(ui, "PRESETS");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.preset_name)
-                        .hint_text("name")
-                        .desired_width(150.0),
-                );
-                if ui.button("SAVE").clicked() {
-                    let name = self.preset_name.trim().to_string();
-                    if name.is_empty() {
-                        self.push_log("a preset needs a name.".into());
-                    } else {
-                        self.save_preset(&name);
-                    }
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                let names = self.preset_names.clone();
-                for name in names {
-                    if ui.button(&name).clicked() {
-                        self.load_preset(&name);
-                    }
-                }
-            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {

@@ -768,6 +768,18 @@ Panels:
   second, under 200 px of width, donating its space to the controls; the
   controls, operators and stats never hide, and the window refuses to shrink
   under 800×600, the size at which the control column itself would clip.
+- **Presets** live in the header: the `presets` chip (the header's one
+  functional control, inverted while open) hangs a pane window with a single
+  text field that both *filters* the bank live and *names* a save. The whole
+  pane speaks one interaction language, the **double-usage principle**: hover
+  thickens the outline, a first activation selects — the outline becomes a
+  dotted bevel — and only repeating the same activation confirms, inverting
+  the box until release. Click a preset to highlight it (at most one, ever),
+  click it again to load it; ENTER selects SAVE, ENTER again writes the
+  current configuration under the typed name; DELETE, with its own double
+  confirmation, removes the highlighted preset. Nothing in the pane fires on
+  a single press, and a save never overwrites — a taken name gets `~X`
+  appended, so DELETE's double confirmation is the only way to lose a preset.
 - **The relic log** (bottom right; `crates/fibonacci-gui/assets/relic_log.json`):
   all *voiced* text is data, not code, and it is Billy's. 30 entries, **every id a
   Fibonacci number** (1 → 1,346,269 = F(31)), 18 archetypes sharing 11 avatars.
