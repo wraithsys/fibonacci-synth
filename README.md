@@ -231,6 +231,11 @@ filters, one per ear:
   phase), but the Room hears them at `ghost × 1/φ^(depth−1)`. The hidden
   interior of the tree is audible only in the reverb — the room is haunted
   by operators that don't exist in the direct sound.
+- **The master gates every send**: the Room's whole input is scaled by the
+  (glided) master gain, so master governs how loudly the instrument speaks
+  *into* the room. At master 0 the room falls silent instead of
+  reverberating a voice nobody dry-hears (the 2026-08-05 sweep found the
+  opposite: master down, Room mix up, sound still coming out). Tested.
 - **Diffusion**: two series allpasses per ear (5.1 ms and 5.1/φ ms) with
   coefficient 1/φ = φ − 1 ≈ 0.618.
 - **Decay**: per-comb feedback follows the RT60 model `g = 0.001^(T/rt60)`,

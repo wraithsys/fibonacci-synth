@@ -110,6 +110,31 @@ fn index_zero_is_pure_sines() {
     );
 }
 
+/// Master gates the Room's input: with master at zero and the Room fully
+/// wet, the output is exact silence — the room cannot reverberate a voice
+/// nobody dry-hears.
+#[test]
+fn master_zero_silences_the_room_too() {
+    let mut patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+    patch.master_level = 0.0;
+    let mut voice = Voice::new(SR, patch);
+    voice.set_freq_hz(110.0);
+    let mut verb = StereoVerb::new(SR);
+    verb.configure(voice.patch(), voice.compiled());
+    verb.set_params(VerbParams {
+        mix: 1.0,
+        ..VerbParams::default()
+    });
+    let mut peak = 0.0f32;
+    for _ in 0..10 {
+        voice.render_frames(4800, |_, frame| {
+            let (l, r) = verb.process(frame);
+            peak = peak.max(l.abs()).max(r.abs());
+        });
+    }
+    assert_eq!(peak, 0.0, "the room spoke at master 0");
+}
+
 /// An INDEX move re-levels the tree continuously. Right after a full-scale
 /// drop the tree must still be modulated (the glide is still leaving the old
 /// index), and once it settles the voice must be indistinguishable from one

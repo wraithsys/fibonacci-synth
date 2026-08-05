@@ -28,6 +28,7 @@ fn main() {
                 let frame = Frame {
                     ops: [s * 0.15, s * 0.2, s * 0.3, s * 0.4, s * 0.8],
                     mix: s * 0.6,
+                    master: 1.0,
                 };
                 let (l, r) = verb.process(&frame);
                 if !l.is_finite() || !r.is_finite() {

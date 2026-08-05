@@ -26,6 +26,12 @@ pub struct Frame {
     pub ops: [f32; NUM_OPS],
     /// The dry mono mix: mean of carriers × master gain (position^φ, glided).
     pub mix: f32,
+    /// This sample's glided master gain. The Room scales its *input* by it —
+    /// master governs how loudly the instrument speaks into the room, so at
+    /// master 0 the room falls silent instead of reverberating a voice nobody
+    /// dry-hears (Billy's sweep, 2026-08-05: "Master volume should effect the
+    /// amplitude of the signal being sent into THE ROOM").
+    pub master: f32,
 }
 
 const TAU: f32 = core::f32::consts::TAU;
@@ -386,6 +392,7 @@ impl Voice {
                 &Frame {
                     ops: self.out,
                     mix: mix * inv_carriers * self.master,
+                    master: self.master,
                 },
             );
         }

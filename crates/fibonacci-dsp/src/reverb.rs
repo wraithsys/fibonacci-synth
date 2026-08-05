@@ -372,11 +372,15 @@ impl StereoVerb {
         self.haunt_s += PARAM_SMOOTH * (self.params.haunt - self.haunt_s);
         self.damp_s += PARAM_SMOOTH * (self.params.damp - self.damp_s);
 
-        // Op sends: carriers full, modulators through the ghost bleed.
+        // Op sends: carriers full, modulators through the ghost bleed, and
+        // everything through the master gain — the master governs how loudly
+        // the instrument speaks *into* the room (already glided in the voice,
+        // so no zipper arrives here). At master 0 the room falls silent
+        // rather than reverberating a voice nobody dry-hears.
         let mut sends = [0.0f32; NUM_OPS];
         for i in 0..NUM_OPS {
             let bleed = if self.is_carrier[i] { 1.0 } else { self.ghost_s };
-            sends[i] = frame.ops[i] * self.send[i] * bleed;
+            sends[i] = frame.ops[i] * frame.master * self.send[i] * bleed;
         }
         // Ghost Lines first: op i's recirculating, phase-rotating echo…
         let mut haunted = [0.0f32; NUM_OPS];
@@ -428,6 +432,7 @@ mod tests {
         Frame {
             ops: [v; NUM_OPS],
             mix: v,
+            master: 1.0,
         }
     }
 
