@@ -1,7 +1,9 @@
 //! Behavioral tests for the drone voice: determinism, the power-switch reset
 //! contract, and numeric health across the whole shipped algorithm range.
 
-use fibonacci_dsp::{Patch, RatioMode, StereoVerb, VerbParams, Voice, ALGORITHMS, NUM_OPS};
+use fibonacci_dsp::{
+    master_gain, Patch, RatioMode, StereoVerb, VerbParams, Voice, ALGORITHMS, NUM_OPS,
+};
 
 const SR: f32 = 48_000.0;
 
@@ -79,9 +81,10 @@ fn disabled_op_is_silent_and_out_of_the_path() {
     voice.render(&mut buf); // let fades finish
     voice.render(&mut buf);
 
-    // A pure sine's peak is level * master (no modulation to spread energy).
+    // A pure sine's peak is level × master gain (no modulation to spread
+    // energy) — the master knob's rendered gain is position^φ.
     let peak = buf.iter().fold(0.0f32, |p, &x| p.max(x.abs()));
-    let expected = voice.patch().master_level; // carrier level 1.0, 1 carrier
+    let expected = master_gain(voice.patch().master_level); // carrier level 1.0, 1 carrier
     assert!(
         (peak - expected).abs() < 0.01,
         "expected clean sine peak ~{expected}, got {peak}"
@@ -101,10 +104,62 @@ fn index_zero_is_pure_sines() {
     voice.render(&mut buf);
     let peak = buf.iter().fold(0.0f32, |p, &x| p.max(x.abs()));
     assert!(
-        (peak - patch.master_level).abs() < 0.01,
+        (peak - master_gain(patch.master_level)).abs() < 0.01,
         "expected pure sine peak ~{}, got {peak}",
-        patch.master_level
+        master_gain(patch.master_level)
     );
+}
+
+/// A master change glides instead of stepping. Two phase-locked twins differ
+/// only in one master move; the ratio of their outputs *is* the ratio of their
+/// master gains, so it must walk sample-by-sample from 1 toward the new
+/// gain's ratio — never jump. (A per-block master was a step, and a step in
+/// gain on a sounding drone is a click — Billy's sweep, 2026-08-05.)
+#[test]
+fn master_changes_glide_instead_of_stepping() {
+    let patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+    let mut moved = Voice::new(SR, patch);
+    let mut held = Voice::new(SR, patch);
+    moved.set_freq_hz(110.0);
+    held.set_freq_hz(110.0);
+    let mut buf = vec![0.0f32; 4800];
+    moved.render(&mut buf);
+    held.render(&mut buf);
+
+    moved.patch_mut().master_level = 0.1;
+    let mut ya = vec![0.0f32; 4800];
+    let mut yb = vec![0.0f32; 4800];
+    moved.render(&mut ya);
+    held.render(&mut yb);
+
+    let start = master_gain(patch.master_level);
+    let target = master_gain(0.1);
+    let mut prev_ratio = 1.0f32;
+    let mut reached = false;
+    for (&a, &b) in ya.iter().zip(&yb) {
+        if b.abs() < 1e-3 {
+            continue; // near a zero crossing the ratio is numerically void
+        }
+        let ratio = a / b;
+        assert!(
+            ratio <= prev_ratio + 1e-4 && ratio >= target / start - 1e-4,
+            "gain ratio must descend monotonically toward {}, got {ratio} after {prev_ratio}",
+            target / start
+        );
+        // The one-pole moves ~2.5% of the remaining distance per sample at
+        // 13 ms and 48 kHz; zero-crossing skips can stack a few samples
+        // between compared points. 20% still cleanly convicts a block-step,
+        // which covers ~96% of the distance in one hop.
+        assert!(
+            prev_ratio - ratio < 0.2 * prev_ratio,
+            "gain moved by a step, not a glide: {prev_ratio} -> {ratio}"
+        );
+        prev_ratio = ratio;
+        if (ratio - target / start).abs() < 0.01 {
+            reached = true;
+        }
+    }
+    assert!(reached, "the glide never arrived at the new gain");
 }
 
 /// Power-switch flips delivered via a whole-patch update (how the realtime

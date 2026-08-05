@@ -31,8 +31,8 @@ use anyhow::{bail, Context as _, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
 use fibonacci_dsp::{
-    compile, midi_to_hz, HoldSource, Melody, MelodyParams, Patch, RatioMode, Scale, StereoVerb,
-    Tuning, VerbParams, Voice, ALGORITHMS, NUM_OPS, PHI,
+    compile, master_gain, midi_to_hz, HoldSource, Melody, MelodyParams, Patch, RatioMode, Scale,
+    StereoVerb, Tuning, VerbParams, Voice, ALGORITHMS, NUM_OPS, PHI,
 };
 use std::collections::VecDeque;
 use std::time::{Instant, SystemTime};
@@ -3671,6 +3671,10 @@ impl eframe::App for App {
                         "rip     φ×29 ms = 46.9 ms, π/5 per pass".to_string(),
                         "fb      avg(y₋₁, y₋₂) → π rad at fb 1".to_string(),
                         format!("mix     mean of {} carrier(s)", compiled.carrier_count),
+                        format!(
+                            "master  x^φ → gain {:.3}, one-pole 13 ms",
+                            master_gain(self.shadow.master_level)
+                        ),
                         format!(
                             "glide   one-pole, {:.2} s → {:.1} hz",
                             self.shadow.glide_seconds, self.drone_hz

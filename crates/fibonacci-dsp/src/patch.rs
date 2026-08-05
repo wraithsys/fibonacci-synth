@@ -35,6 +35,17 @@ pub fn index_response(depth: u8, index: f32) -> f32 {
     index.clamp(0.0, 1.0).powf(PHI.powi(depth as i32 - 2))
 }
 
+/// The MASTER control's taper: `gain = position^φ` — the golden ease-in.
+///
+/// The knob stores the *position*; this is the gain the engine renders. A
+/// linear master spends half its travel above −6 dB, so the low range felt
+/// like a switch (Billy's sweep, 2026-08-05: "should be more exponential to
+/// ease in"). The φ exponent bows the curve floorward — position 0.5 lands at
+/// gain 0.326 ≈ −9.7 dB — while the endpoints stay exactly 0 and 1.
+pub fn master_gain(position: f32) -> f32 {
+    position.clamp(0.0, 1.0).powf(PHI)
+}
+
 /// Operator frequency-ratio model. Each model is documented in README.md;
 /// ratios are relative to the voice's base frequency.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,7 +148,9 @@ pub struct Patch {
     /// destructively with the live modulation — the spectrum hollows and
     /// blooms cyclically. See README §11 and [`crate::voice`].
     pub rip: f32,
-    /// Master output level, 0..=1, applied after carrier-mean normalization.
+    /// Master control *position*, 0..=1. The engine renders
+    /// [`master_gain`]`(position)` = position^φ, glided per-sample over 13 ms
+    /// (see `voice.rs`), applied after carrier-mean normalization.
     pub master_level: f32,
     /// Portamento time constant in seconds for pitch changes. 0 = instant.
     pub glide_seconds: f32,

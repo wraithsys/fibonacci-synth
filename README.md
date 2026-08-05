@@ -144,10 +144,21 @@ bit-identical audio regardless of render chunk size.
 
 ### 7. Mix normalization
 
-The output is the *mean* of the carrier outputs (× master level), using the
+The output is the *mean* of the carrier outputs (× master gain), using the
 algorithm's compiled carrier count. Switching a carrier off makes the drone
 quieter rather than silently renormalizing the others — no level pumping when
 you sculpt the structure.
+
+The MASTER knob stores a *position*; the rendered gain is `position^φ` — the
+golden ease-in. A linear master spends half its travel above −6 dB, which made
+the low range feel like a switch (the 2026-08-05 controls sweep: "more
+exponential to ease in"). Position 0.5 lands at gain 0.326 ≈ −9.7 dB; the
+endpoints stay exactly 0 and 1. The gain also *glides*: a per-sample one-pole
+with a Fibonacci 13 ms time constant chases the target, because a master
+applied per-block steps at block boundaries, and a gain step on a sounding
+drone is a click — the same zipper mechanism the Room's ~15 ms parameter glide
+fixed. Tested: a master move must descend monotonically, sample-by-sample,
+never in a hop.
 
 ### 8. The INDEX macro: golden-exponent depth curves
 

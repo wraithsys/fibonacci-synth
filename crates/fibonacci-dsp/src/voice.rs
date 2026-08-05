@@ -14,7 +14,7 @@
 //! immediately (determinism wins over the small discontinuity that can cause).
 
 use crate::algorithm::{compile, AlgorithmId, Compiled, NUM_OPS};
-use crate::patch::{index_response, Patch, PHI};
+use crate::patch::{index_response, master_gain, Patch, PHI};
 use crate::phase::{allpass_coeff_for, PhaseRotator, DESIGN_HZ, PHASE_PER_PASS};
 
 /// One sample of the voice, with the per-operator outputs exposed — this is
@@ -24,7 +24,7 @@ use crate::phase::{allpass_coeff_for, PhaseRotator, DESIGN_HZ, PHASE_PER_PASS};
 pub struct Frame {
     /// Current-sample output of every operator (post level, gain, and INDEX).
     pub ops: [f32; NUM_OPS],
-    /// The dry mono mix: mean of carriers × master level.
+    /// The dry mono mix: mean of carriers × master gain (position^φ, glided).
     pub mix: f32,
 }
 
@@ -39,6 +39,12 @@ const MOD_SCALE: f32 = TAU;
 const FB_SCALE: f32 = core::f32::consts::PI;
 /// De-click fade time for the operator power switches.
 const RAMP_SECONDS: f32 = 0.002;
+/// One-pole time constant for the master gain, a Fibonacci 13 ms. A master
+/// change applied per-block is a gain step, and a gain step on a sounding
+/// drone is a click — the same zipper bug the Room's ~15 ms parameter glide
+/// fixed ("mix is clicky", 2026-08-03; "MASTER is clicky", Billy's sweep,
+/// 2026-08-05). Per-sample state, so the contract stays chunk-size invariant.
+const MASTER_GLIDE_S: f32 = 0.013;
 /// The Rip Line's delay: the golden interval above the Room's base comb.
 const RIP_DELAY_SECONDS: f32 = 0.029 * PHI;
 /// Phase-modulation injected into each carrier by the Rip at rip = 1.0, in
@@ -113,6 +119,8 @@ pub struct Voice {
     /// Glide-smoothed base frequency in Hz.
     freq: f32,
     target_freq: f32,
+    /// Glide-smoothed master gain, chasing `master_gain(patch.master_level)`.
+    master: f32,
     /// The Rip Line and its most recent output (used one sample later as
     /// carrier phase modulation).
     rip_line: RipLine,
@@ -137,6 +145,7 @@ impl Voice {
             pending_reset: [false; NUM_OPS],
             freq: 110.0,
             target_freq: 110.0,
+            master: master_gain(patch.master_level),
             rip_line: RipLine::new(sample_rate),
             rip_sig: 0.0,
         }
@@ -271,7 +280,10 @@ impl Voice {
         // feedback inaudible below max index (found by ear, 2026-08-03).
         // Index 0 still silences it exactly.
         let eff_feedback = self.patch.feedback * index_response(1, self.patch.index);
-        let mix_norm = self.patch.master_level / self.compiled.carrier_count as f32;
+        // The master knob's taper and glide: the target is position^φ, and
+        // the rendered gain chases it per-sample like `freq` does.
+        let master_target = master_gain(self.patch.master_level);
+        let master_k = 1.0 - (-1.0 / (MASTER_GLIDE_S * self.sample_rate)).exp();
         let inv_carriers = 1.0 / self.compiled.carrier_count as f32;
         let rip = self.patch.rip.clamp(0.0, 1.0);
         self.rip_line.fb = RIP_MAX_FB * rip;
@@ -343,11 +355,12 @@ impl Voice {
             // Feed the Rip Line with the carriers' (master-independent) mean;
             // its output modulates the carriers one sample later.
             self.rip_sig = self.rip_line.process(mix * inv_carriers);
+            self.master += (master_target - self.master) * master_k;
             emit(
                 n,
                 &Frame {
                     ops: self.out,
-                    mix: mix * mix_norm,
+                    mix: mix * inv_carriers * self.master,
                 },
             );
         }

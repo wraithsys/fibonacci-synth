@@ -30,6 +30,6 @@ pub mod voice;
 
 pub use algorithm::{compile, AlgorithmId, Combine, Compiled, ALGORITHMS, NUM_NODES, NUM_OPS};
 pub use melody::{HoldSource, Melody, MelodyParams, Scale, Tuning, NUM_SCALES, NUM_TUNINGS};
-pub use patch::{index_response, midi_to_hz, OpParams, Patch, RatioMode, PHI, PLASTIC};
+pub use patch::{index_response, master_gain, midi_to_hz, OpParams, Patch, RatioMode, PHI, PLASTIC};
 pub use reverb::{StereoVerb, VerbParams};
 pub use voice::{Frame, Voice};
