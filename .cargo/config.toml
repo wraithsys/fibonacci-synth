@@ -1,31 +1,39 @@
 # Faster edit/build/run loop on Windows.
 #
-# Swaps the default MSVC `link.exe` for LLVM's `lld-link.exe`, which is a
-# drop-in, flag-compatible replacement. Reported gains are roughly 2x on
-# full builds and up to 5x on incremental ones (i.e. "I touched one function
-# in main.rs and want to see it") — the case that matters most here.
+# Swaps the default MSVC `link.exe` for LLD, which is a drop-in, flag-compatible
+# replacement. Reported gains are roughly 2x on full builds and up to 5x on
+# incremental ones (i.e. "I touched one function in main.rs and want to see
+# it") — the case that matters most here.
 #
 # Does NOT touch codegen, optimization, or anything DSP-related: the
 # [profile.dev] opt-level = 2 in the workspace Cargo.toml (needed so a bare
 # `cargo run` still sounds right) is untouched and unaffected by this file.
 # Purely a link-step swap.
 #
-# Prerequisite (one-time): LLVM. It is ALREADY INSTALLED on this machine —
-# LLD 22.1.8 at C:\Program Files\LLVM\bin — but it was installed WITHOUT the
-# "add to PATH" option, so `where lld-link.exe` finds nothing and the portable
-# form of this file (`linker = "lld-link.exe"`) fails every build with
-#   error: linker `lld-link.exe` not found
-# Verified 2026-08-05, not assumed: neither the user nor the machine persisted
-# Path contains an LLVM entry, so a fresh terminal does not fix it either.
+# No prerequisite. This uses `rust-lld.exe`, the LLD that ships INSIDE the
+# rustup toolchain, so there is nothing to install and nothing to put on PATH.
 #
-# Hence the absolute path below. To go back to the portable one-liner, add
-# C:\Program Files\LLVM\bin to PATH and swap the two lines at the bottom.
+# History (verified 2026-08-05, not assumed): this file previously pointed at a
+# standalone LLVM install at C:\Program Files\LLVM\bin\lld-link.exe. That
+# directory does not exist on this machine — LLVM is not installed — so every
+# build failed with
+#   error: linker `C:\Program Files\LLVM\bin\lld-link.exe` not found
+# (rustc's follow-on note about `link.exe` and Visual Studio is a generic hint
+# and was a red herring: VS 2022 Community with the VC++ tools and Windows SDK
+# 10.0.26100 IS installed here, and the default MSVC linker works fine.)
 #
-# If a build ever produces linker errors that weren't there before, comment
-# out the `linker` line to fall back to the default MSVC linker while you
-# investigate — lld-link is described as "not bug-for-bug compatible with
-# link.exe" for edge cases, though the vast majority of projects are fine.
+# Two things that look right but are NOT, both tried and rejected:
+#   - .../rustlib/x86_64-pc-windows-msvc/bin/gcc-ld/lld-link.exe — rustc passes
+#     it `-flavor link`, which that driver rejects ("unknown argument").
+#   - `linker = "rust-lld.exe"` alone — rustc must be told the flavor
+#     explicitly, hence the rustflags line below.
+#
+# If a build ever produces linker errors that weren't there before, comment out
+# BOTH lines below to fall back to the default MSVC linker while you
+# investigate — that fallback is verified working. LLD is described as "not
+# bug-for-bug compatible with link.exe" for edge cases, though the vast
+# majority of projects are fine.
 
 [target.x86_64-pc-windows-msvc]
-linker = 'C:\Program Files\LLVM\bin\lld-link.exe'
-# linker = "lld-link.exe"   # use this once LLVM's bin is on PATH
+linker = 'C:\Users\akind\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe'
+rustflags = ["-Clinker-flavor=lld-link"]

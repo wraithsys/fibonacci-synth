@@ -1,12 +1,24 @@
 /target
 /renders
-/crates/fibonacci-gui/presets/
+
+# Presets are user data — except the starter bank, which is the shipped
+# seven, negated by name below (a directory-level ignore would hide the
+# negations; the `*` form lets git see into the folder). New saves stay
+# ignored; growing the bank means adding a line here on purpose.
+/crates/fibonacci-gui/presets/*
+!/crates/fibonacci-gui/presets/Manhole Cover.json
+!/crates/fibonacci-gui/presets/drama.json
+!/crates/fibonacci-gui/presets/eleventeen.json
+!/crates/fibonacci-gui/presets/fiftefivemillion.json
+!/crates/fibonacci-gui/presets/one.json
+!/crates/fibonacci-gui/presets/throaty.json
+!/crates/fibonacci-gui/presets/two.json
 
 # Unconfirmed assets never enter history.
 #
 # A file in a commit is a file in every clone forever — that is the whole lesson of
-# assets/font.otf, which is gone from the working tree and still in this repo's
-# history and still the one thing blocking going public. These are derivatives of
+# assets/font.otf, which cost a full history rewrite and a reborn repo on
+# 2026-08-05 (README: "The Xilla history rewrite — DONE"). These are derivatives of
 # source images whose licence is not established, so they stay local until their
 # provenance is settled. Ignored rather than merely un-added, because "never run
 # git add -A in this repo" is not a rule anyone can keep.
@@ -17,3 +29,7 @@
 /crates/fibonacci-gui/assets/*.png
 /docs/
 dist/
+
+# Machine-local build acceleration (linker choice). The committed form broke
+# every machine but one; each machine keeps its own untracked copy.
+/.cargo/config.toml
