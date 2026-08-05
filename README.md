@@ -770,8 +770,9 @@ Panels:
   as a **view toggle**: the first press selects the tuning and shows the bank,
   a second press flips the bank away and gives the phase image the panel back
   — it changes nothing but the view. The footer's full-width mono waveform is
-  **hidden** as of the same sweep (drawing code parked pending the
-  looks-better-without verdict).
+  **gone** — hidden by the same sweep, then deleted for good on Billy's
+  looks-better-without verdict (the drawing code lives in history if the
+  verdict ever reverses).
 - **Event log**: timestamps + measurements only. Every line the program
   authors must be verifiable against the engine or against mathematics;
   anything else is a bug. It rides a **marquee** in the header strip: the six

@@ -1653,7 +1653,6 @@ struct App {
     start: Instant,
     // Live visual state, fed by the viz ring.
     env: [f32; NUM_OPS],
-    scope: VecDeque<f32>,
     lissajous: VecDeque<(f32, f32)>,
     log: VecDeque<String>,
     /// Billy's relic log — the only voice source. Replaced voice.txt and both
@@ -1748,7 +1747,6 @@ impl App {
             scale_picker_open: false,
             start: Instant::now(),
             env: [0.0; NUM_OPS],
-            scope: VecDeque::with_capacity(1024),
             lissajous: VecDeque::with_capacity(512),
             log: VecDeque::new(),
             relics: load_relics(),
@@ -2000,11 +1998,6 @@ impl App {
                     self.env[i] * 0.9985
                 };
             }
-            let mono = 0.5 * (frame.l + frame.r);
-            if self.scope.len() >= 1024 {
-                self.scope.pop_front();
-            }
-            self.scope.push_back(mono);
             if self.lissajous.len() >= 512 {
                 self.lissajous.pop_front();
             }
@@ -2664,35 +2657,6 @@ impl App {
         }
         if k % 3 == 0 {
             painter.line_segment([a - off, b - off], Stroke::new(1.0_f32, WHITE));
-        }
-    }
-
-    /// The mono waveform, full width of the footer. Hidden, not gone: the
-    /// sweep note reads "hide footer scope (may be remove if confirmed it
-    /// looks better without)", so the panel call is out but this and the
-    /// scope buffer stay until that verdict lands.
-    #[allow(dead_code)]
-    fn draw_wave(&self, ui: &mut egui::Ui, height: f32) {
-        let (resp, painter) =
-            ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::hover());
-        let rect = resp.rect;
-        painter.rect_stroke(rect, Rounding::ZERO, Stroke::new(2.0_f32, WHITE));
-        let inner = rect.shrink(4.0);
-        let painter = painter.with_clip_rect(inner);
-        Self::draw_graticule(&painter, inner, 10, 4);
-        if self.scope.len() > 2 {
-            let n = self.scope.len();
-            let mut prev: Option<Pos2> = None;
-            for (i, &s) in self.scope.iter().enumerate() {
-                let p = Pos2::new(
-                    inner.min.x + inner.width() * i as f32 / n as f32,
-                    inner.center().y - s.clamp(-1.0, 1.0) * inner.height() * 0.5,
-                );
-                if let Some(q) = prev {
-                    Self::beam_segment(&painter, q, p, i, false);
-                }
-                prev = Some(p);
-            }
         }
     }
 
