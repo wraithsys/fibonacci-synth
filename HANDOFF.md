@@ -252,11 +252,11 @@ the window icon. Capture recipe that matters: **master 0.5**, so the
 shell renders whole at scale 1.0 — anything larger leans into the
 panel clip and wears a flat edge no recrop can heal.
 
-**Pending v1.0.1**: Billy's remaining bank presets are on his laptop
-(the seven shipped are only this machine's); he copies the .json out
-(plain files, safe — though the laptop *repo* must be re-cloned), they
-get tracked with gitignore negation lines, and v1.0.1 ships icon +
-full bank together. v1.0.0 stands as tagged.
+**v1.0.1 SHIPPED (2026-08-05 evening)**: the icon build plus the full
+bank — Billy's laptop delivered 25 more presets (all made that evening
+on the post-sweep engine, every value already in range), 32 total,
+every algorithm and all five ratio modes represented, each tracked by
+its own gitignore negation line. v1.0.0 stands beneath it.
 
 **Engineering next**:
 1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
