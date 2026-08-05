@@ -16,10 +16,26 @@ No envelopes. The instrument sounds until you tell it not to. Expression comes
 from restructuring the algorithm live, switching operators on and off (true
 resets, not bypasses), pitch glide, and the INDEX / rip / haunt controls.
 
+## Running it
+
+**Windows**: grab the portable zip from the Releases page, unzip anywhere,
+run `blow-your-phase-off-gui.exe`. It drones immediately by design — the
+assets and preset bank travel beside the binary, and nothing is installed
+or written outside its folder except the audio it plays at you.
+
+**From source** (any platform Rust and a sound device reach):
+
 ```
+cargo run --release -p fibonacci-gui   # the instrument (1-bit face)
+cargo run --release -p fibonacci-app   # the REPL shell, same engine
 cargo test                             # engine + structure tests
 cargo run --release --example render   # audition WAVs -> renders/
 ```
+
+Demo renders — every algorithm in the identity mode, the ratio-mode
+unfoldings, INDEX sweeps, and the Room — are attached to each release
+rather than committed here; `renders/` regenerates them all offline,
+bit-deterministically.
 
 ---
 

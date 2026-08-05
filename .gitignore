@@ -16,3 +16,4 @@
 /crates/fibonacci-gui/assets/*.jpg
 /crates/fibonacci-gui/assets/*.png
 /docs/
+dist/

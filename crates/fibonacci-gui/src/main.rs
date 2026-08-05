@@ -963,10 +963,13 @@ struct SavedState {
 }
 
 /// Presets and state live beside the assets when run from the workspace,
-/// or in ./presets beside a shipped binary.
+/// or in `presets/` beside the shipped binary — exe-anchored, not
+/// cwd-anchored, so the bank travels with the zip however it is launched.
 fn preset_dir() -> std::path::PathBuf {
     if std::path::Path::new("crates/fibonacci-gui").is_dir() {
         "crates/fibonacci-gui/presets".into()
+    } else if let Some(dir) = exe_dir() {
+        dir.join("presets")
     } else {
         "presets".into()
     }
@@ -1522,12 +1525,24 @@ fn load_relics() -> Vec<Relic> {
 /// found its assets when launched from one particular folder — and `cargo test`
 /// launches from another, which is how this surfaced. In a shipped binary the
 /// path simply won't exist and the entry costs nothing.
-fn asset_dirs() -> [std::path::PathBuf; 3] {
-    [
+fn asset_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = vec![
         std::path::PathBuf::from("crates/fibonacci-gui/assets"),
         std::path::PathBuf::from("assets"),
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"),
-    ]
+    ];
+    // Anchored to the binary itself, not the working directory: a shipped
+    // build launched from a shortcut (or any other cwd) still finds the
+    // assets that travel beside it in the zip.
+    if let Some(dir) = exe_dir() {
+        dirs.push(dir.join("assets"));
+    }
+    dirs.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"));
+    dirs
+}
+
+/// The directory the running binary sits in.
+fn exe_dir() -> Option<std::path::PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.to_path_buf())
 }
 
 /// Resolve an asset name to a readable path.
