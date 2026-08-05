@@ -107,7 +107,7 @@ ear/eye-verdicted by Billy).** His notes live at
   suffix); DELETE double-confirms against the highlighted preset.
 - **Layout**: STRUCTURE panel and the footer scope are gone (scope
   deleted for good on Billy's verdict; drawing code in history at
-  `8d13d36^`). SCALE is a view toggle — second press flips the scale
+  `1b80f75^`). SCALE is a view toggle — second press flips the scale
   bank away and gives the phase image back. The phase image owns the
   left panel's remaining height. Resize-down priority: bottom row
   hides first (<220 px), the Logalith second (<200 px wide), controls
@@ -128,9 +128,10 @@ ear/eye-verdicted by Billy).** His notes live at
   8% decay chance. Intrusions render in inverted type at console speed
   (90 cps, dead even); humans type at 30 cps with jitter and punctuation
   holds. The old `voice.txt`/`integrity_*.txt` pools are retired.
-- **Space Z is empty pending a rethink.** The portrait pipeline — dithered
+- **Space Z is the record card** (the rethink landed 2026-08-05, section
+  below). The portrait pipeline — dithered
   1-bit text grids drawn as animated point clouds, ordered by ink density
-  and ping-ponged — is in history at `52c5a99`; the grid parser, frame
+  and ping-ponged — is in history at `d4a326d`; the grid parser, frame
   loader, batch converter (`examples/png_to_grid.rs`) and Billy's 14 grids
   all survive. The zone is **574×412, aspect 1.39**, and the app logs its
   own figure on startup and resize. Briefs: `assets/portraits/README.md`
@@ -140,8 +141,15 @@ ear/eye-verdicted by Billy).** His notes live at
 
 ## Open queue
 
-**Billy's items**: the eleven portrait images (brief written, he is on it);
-Space Z's rethink; 1-bit icon/sigil; starter-preset bank; roster-to-8.
+**Billy's items**: starter-preset bank (**nearly done**, 2026-08-05);
+1-bit icon/sigil; roster-to-8. **Portraits are deferred indefinitely past
+v1** (Billy, 2026-08-05: left "unless I decide I want to overcome the
+hurdles of it") — the four unassigned grids and the three unwritten
+characters wait with them, and nothing in the app currently draws them, so
+the deferral costs zero visible surface. Note for anyone reading old lists:
+"Billy's pools" (`integrity_low/critical.txt`) is a retired item — the
+relic-log restructure replaced the pool mechanism entirely; his text lives
+in `relic_log.json` and there is nothing called pools left to write.
 
 **THE GATE IS CLEARED (2026-08-05).** The Xilla history rewrite is done, on
 Billy's instruction: git-filter-repo stripped the blob from all 46 commits,
@@ -201,7 +209,7 @@ glitch. Reads the same relic the voice does, so card and words agree.
 
 The plinth shared the zone for about an hour on a golden cut and was then
 **parked**: Billy's call, image work is not the thread now. The drawing
-side is at `52c5a99` and has been restored from there once already, so
+side is at `d4a326d` and has been restored from there once already, so
 bringing it back is a known move, not a rewrite.
 
 **Portraits — Billy delivered ten (2026-08-05), 5 of 11 slots load.**
@@ -214,12 +222,13 @@ cap was 96 while nine of ten were 98–120 wide, so they were silently
 refused — cap is now 128. A test parses every grid in the folder and fails
 under 3% ink, because both failures look exactly like art nobody drew yet.
 
-**Still Billy's**: four delivered portraits are unassigned — `human1`,
-`human2`, `human3`, `non_human1` — and only he knows which archetype each
-is; rename to the slot filename and they are live. Three more
-(`cultist`, `schism_leader`, `borg_cube_easter_egg`) are characters the
-relic log has never heard of and need entries, which is his text. Full
-status table in `assets/portraits/README.md`.
+**Portraits — deferred indefinitely (Billy, 2026-08-05).** The state below
+holds if he ever picks it back up: four delivered portraits are unassigned
+— `human1`, `human2`, `human3`, `non_human1` — and only he knows which
+archetype each is; rename to the slot filename and they are live. Three
+more (`cultist`, `schism_leader`, `borg_cube_easter_egg`) are characters
+the relic log has never heard of and need entries, which is his text. Full
+status table in `assets/portraits/README.md`. Not a v1 item.
 
 **Engineering next**:
 1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
