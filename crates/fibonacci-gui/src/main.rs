@@ -3657,9 +3657,32 @@ impl eframe::App for App {
             patch_changed |= ui
                 .add(egui::Slider::new(&mut self.shadow.master_level, 0.0..=1.0).text("master"))
                 .changed();
-            patch_changed |= ui
-                .add(egui::Slider::new(&mut self.shadow.glide_seconds, 0.0..=2.0).text("glide s"))
-                .changed();
+            // The GLIDE knob's taper (README §6): seconds = 2·position^φ⁴.
+            // Past 0.1 s a glide is already outside normal portamento scope,
+            // so ~65% of the travel serves 0–0.1 s (the bottom half covers
+            // 0–17 ms) while the full 2 s stays at the top. Same stateless
+            // position round-trip as INDEX: derived each frame, written back
+            // only on interaction.
+            let glide_exp = PHI * PHI * PHI * PHI;
+            let mut glide_pos =
+                (self.shadow.glide_seconds.clamp(0.0, 2.0) / 2.0).powf(1.0 / glide_exp);
+            let r = ui.add(
+                egui::Slider::new(&mut glide_pos, 0.0..=1.0)
+                    .text("glide s")
+                    .custom_formatter(move |p, _| {
+                        format!("{:.3}", 2.0 * p.powf(glide_exp as f64))
+                    })
+                    .custom_parser(move |s| {
+                        s.parse::<f64>()
+                            .ok()
+                            .map(|v| (v.clamp(0.0, 2.0) / 2.0).powf(1.0 / glide_exp as f64))
+                    })
+                    .drag_value_speed(0.001),
+            );
+            if r.changed() {
+                self.shadow.glide_seconds = 2.0 * glide_pos.powf(glide_exp);
+            }
+            patch_changed |= r.changed();
             let resp = ui.add(
                 egui::Slider::new(&mut self.drone_hz, 27.5..=440.0)
                     .logarithmic(true)
@@ -3697,7 +3720,7 @@ impl eframe::App for App {
                             master_gain(self.shadow.master_level)
                         ),
                         format!(
-                            "glide   one-pole, {:.2} s → {:.1} hz",
+                            "glide   one-pole, {:.3} s → {:.1} hz",
                             self.shadow.glide_seconds, self.drone_hz
                         ),
                     ] {

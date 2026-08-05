@@ -130,7 +130,12 @@ feedback = 1.0.
 There are **no envelopes** anywhere in the engine.
 
 - The voice drones at its current pitch indefinitely. Pitch changes glide
-  (one-pole smoothing, patch-settable time, 0 = instant).
+  (one-pole smoothing, patch-settable time, 0 = instant). The GLIDE knob's
+  travel is tapered `seconds = 2·position^φ⁴`: past 0.1 s a glide is already
+  outside normal portamento scope (the 2026-08-05 sweep), so ~65 % of the
+  travel serves 0–0.1 s and the bottom half of the knob covers 0–17 ms, with
+  the full 2 s still at the top. The box reads true seconds to the
+  millisecond, and typing a number inverts the taper.
 - Each operator has a **power switch**. Off = fade out over ~2 ms (de-click),
   then the phase accumulator — and feedback history, if it's the feedback
   operator — is **zeroed**. An off operator holds no ghost state.
