@@ -3606,11 +3606,32 @@ impl eframe::App for App {
 
             let mut patch_changed = false;
             let mut log_line: Option<String> = None;
-            let r = ui.add(egui::Slider::new(&mut self.shadow.index, 0.0..=1.0).text("INDEX"));
+            // The INDEX knob's taper (README §8): travel is position^φ, which
+            // exactly linearizes the first-arriving response — feedback's
+            // concave x^(1/φ) — in knob travel. The box shows the true index
+            // (what response() receives) to 0.001; typing inverts the taper.
+            // Position is recomputed from the index each frame rather than
+            // stored, and written back only on interaction, so the powf
+            // round-trip can never walk the patch on its own.
+            let mut pos = self.shadow.index.clamp(0.0, 1.0).powf(1.0 / PHI);
+            let r = ui.add(
+                egui::Slider::new(&mut pos, 0.0..=1.0)
+                    .text("INDEX")
+                    .custom_formatter(|p, _| format!("{:.3}", p.powf(PHI as f64)))
+                    .custom_parser(|s| {
+                        s.parse::<f64>()
+                            .ok()
+                            .map(|v| v.clamp(0.0, 1.0).powf(1.0 / PHI as f64))
+                    })
+                    .drag_value_speed(0.001),
+            );
+            if r.changed() {
+                self.shadow.index = pos.powf(PHI);
+            }
             patch_changed |= r.changed();
             if r.drag_stopped() {
                 log_line = Some(format!(
-                    "index {:.2}. modulator response x^(φ^(depth−2)).",
+                    "index {:.3}. modulator response x^(φ^(depth−2)), knob x^φ.",
                     self.shadow.index
                 ));
             }

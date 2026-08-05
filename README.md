@@ -185,6 +185,16 @@ shallow modulators downward: **the INDEX knob unfolds the tree in time**, the
 same gesture as the algorithm sequence but continuous. Carrier output levels
 are untouched — this is a modulation-depth control, not a volume knob.
 
+The knob's *travel* is tapered: slider position maps to `index = position^φ`.
+The reason is the feedback curve above — `x^(1/φ)` has unbounded slope at 0,
+so on a linear knob the first millimetre of travel carried the whole arrival
+of the grit (the 2026-08-05 sweep: "smoother in the lower ranges, 0.001
+fidelity"). Composed with the taper it becomes `position^(φ·1/φ)` =
+**linear in knob travel** — the φ taper is exactly the inverse of the
+steepest response it feeds. The value box reads the true index (what
+`response()` receives) to three decimals, and typing a number inverts the
+taper, so the display and the mathematics above stay in the same units.
+
 ### 9. The Room: a comb constellation built from the tone's own ratios
 
 A stereo reverb (`reverb.rs`) that doesn't reverberate the mix — it listens
