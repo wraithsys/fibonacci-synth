@@ -375,6 +375,12 @@ const CONSOLE_CPS: f32 = 90.0;
 const MARQUEE_PX_PER_SEC: f64 = 40.0;
 /// How many of the most recent log lines ride the ticker.
 const MARQUEE_LINES: usize = 6;
+/// The ticker's face — deliberately NOT the interface's own, so the log reads
+/// as a different stream from the device text beside it (Billy's sweep,
+/// 2026-08-05). Pixeloid Sans shares Pixeloid Mono's 9 px grid, so it lands at
+/// the same sizes, and font_probe confirms it carries the log's maths set
+/// (φ ρ π Δ × · ≈ →); the glyphs it lacks (subscripts, ◦) never ride the ticker.
+const MARQUEE_FACE: &str = "pixeloid_sans";
 
 #[derive(Clone, Copy)]
 enum Event {
@@ -2588,7 +2594,11 @@ impl App {
         }
     }
 
-    /// The mono waveform, full width of the footer.
+    /// The mono waveform, full width of the footer. Hidden, not gone: the
+    /// sweep note reads "hide footer scope (may be remove if confirmed it
+    /// looks better without)", so the panel call is out but this and the
+    /// scope buffer stay until that verdict lands.
+    #[allow(dead_code)]
     fn draw_wave(&self, ui: &mut egui::Ui, height: f32) {
         let (resp, painter) =
             ui.allocate_painter(Vec2::new(ui.available_width(), height), Sense::hover());
@@ -2754,7 +2764,11 @@ impl App {
             .collect::<Vec<_>>()
             .join("   ·   ");
         let painter = painter.with_clip_rect(inner);
-        let galley = painter.layout_no_wrap(text, ui_font(painter.ctx(), 11.0), WHITE);
+        let font = FontId::new(
+            grid_size(11.0, native_of(MARQUEE_FACE), painter.ctx().pixels_per_point()),
+            family(MARQUEE_FACE),
+        );
+        let galley = painter.layout_no_wrap(text, font, WHITE);
         // A short gap, not a screenful: a screenful left the band blank for a
         // third of every cycle (measured off Billy's 00:00:57 screenshot —
         // ~23 s of nothing out of 58 s). The ticker stays populated now.
@@ -3194,22 +3208,7 @@ impl eframe::App for App {
             });
         });
 
-        // The footer is the waveform alone, full width: the voice moved into
-        // the centerpiece, the log into the header marquee, and the phase
-        // image into the right panel (Billy's spot G).
-        egui::TopBottomPanel::bottom("scopes").min_height(84.0).show(ctx, |ui| {
-            self.draw_wave(ui, 74.0);
-        });
-
         egui::SidePanel::left("stats").exact_width(195.0).show(ctx, |ui| {
-            let compiled = compile(self.shadow.algorithm);
-            Self::inverted_strip(ui, "STRUCTURE");
-            ui.add_space(2.0);
-            ui.label(format!("carriers   {}", compiled.carrier_count));
-            ui.label(format!("max depth  {}", compiled.depth.iter().max().unwrap()));
-            ui.label("feedback   op 1");
-            ui.label(format!("id         {:04b}", self.shadow.algorithm.0));
-            ui.add_space(6.0);
             Self::inverted_strip(ui, "THE TREE");
             self.draw_tree(ui);
             ui.add_space(6.0);

@@ -695,9 +695,11 @@ Panels:
   when haunt > 0, dotted when dormant.
 - **LOCAL φ INTEGRITY**: a display composite, `100·(1−max(rip, haunt))` —
   the formula is printed next to the meter.
-- **Scopes**: the mono waveform takes the full width of the footer; the L/R
-  Lissajous (mid/side rotated) — the phase image itself — sits under the melody
-  parameters in the left panel, circular whatever its box's aspect. It is given a
+- **Scopes**: the L/R Lissajous (mid/side rotated) — the phase image itself —
+  sits under the melody parameters in the left panel, circular whatever its
+  box's aspect. The footer's full-width mono waveform is **hidden** as of the
+  2026-08-05 controls sweep ("may be remove if confirmed it looks better
+  without"); its drawing code is parked in place pending that verdict. It is given a
   reserved share of the panel rather than "whatever height is left": under the
   presets on leftover height, one app-wide padding change pushed it past the bottom
   edge and it silently stopped drawing.
@@ -706,7 +708,10 @@ Panels:
   anything else is a bug. It rides a **marquee** in the header strip: the six
   most recent measurements loop leftward at 40 px/s, advanced in whole pixels
   only, because a sub-pixel scroll is a blurry scroll and the no-AA rule
-  forbids it. The loop's gap is 80 px, not a screenful — a screenful left the
+  forbids it. The ticker wears **Pixeloid Sans**, not the interface's Pixeloid
+  Mono, so the log reads as a different stream from the device text beside it;
+  the two share a 9 px grid, and the Sans covers the log's maths set
+  (φ ρ π Δ × · ≈ →). The loop's gap is 80 px, not a screenful — a screenful left the
   band blank for ~23 s of every 58 s cycle.
 - **Marginalia** (under the controls): the models behind the sliders above —
   the INDEX exponents, the golden level decay, the Rip's delay and rotation,
