@@ -238,8 +238,31 @@ filters, one per ear:
   opposite: master down, Room mix up, sound still coming out). Tested.
 - **Diffusion**: two series allpasses per ear (5.1 ms and 5.1/φ ms) with
   coefficient 1/φ = φ − 1 ≈ 0.618.
-- **Decay**: per-comb feedback follows the RT60 model `g = 0.001^(T/rt60)`,
-  with a one-pole lowpass in each loop (`damp`) for high-frequency rolloff.
+- **Decay**: per-comb feedback follows the RT60 model `g = 0.001^(T/rt60)`.
+  The knob's range is **honest by measurement**: `examples/rt60_probe.rs`
+  charges the room, cuts the input, and times the fall to −60 dB — real decay
+  saturates near 7 s (the feedback cap plus the tap-wobble's interpolation
+  loss, and the wobble is not removable: it is what keeps a drone-fed room
+  sounding like a room), so the knob runs 0.05–8 s on a log scale (equal knob
+  distance = equal decay ratio; the granularity lives in the low seconds
+  where the ear does). In 0.5–4 s the command is exact; the top of the knob
+  means "as long as this room goes" (~6.4 s measured). Tested: commanded 2 s
+  must measure 1.5–2.8 s, and damp must not move it.
+- **Damp is an MS-20** (the 2026-08-05 sweep): the knob's voice moved from
+  the comb loops to the wet bus — a resonant 4-pole lowpass (a resonant
+  2-pole SVF into a plain 2-pole: 24 dB/oct, one peak) feeding straight into
+  the tanh, which is the MS-20's own filter-into-saturator topology and why
+  it sings rather than merely darkens. Cutoff descends **ten golden steps**
+  across the knob (`fc = 18 kHz / φ^(10·damp)` ≈ 146 Hz at damp 1);
+  resonance wakes at the **1/φ knee** and rises on a convex φ curve to
+  **Q = φ⁴** — earned at the extreme, absent below the knee. The filter sits
+  *outside* the comb loops on purpose: a resonant peak inside recirculation
+  multiplies loop gain past the feedback cap and turns the room into an
+  oscillator; on the bus the scream stays bounded by the tanh (tested at
+  full damp + full haunt). The loops keep 1/φ² of the knob as plain per-pass
+  rolloff — enough to decay dark, small enough that measured T60 holds still
+  while damp turns (the old full-strength in-loop damp was quietly shaving
+  ~20% off the tail).
 - **Gain honesty**: a comb resonates at up to `1/(1−g)`, and this
   instrument feeds its reverb standing waves, not transients — so
   unstaged, long rt60 becomes raw gain and the bus hard-clips (audible as

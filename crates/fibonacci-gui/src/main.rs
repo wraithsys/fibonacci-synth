@@ -991,7 +991,9 @@ fn sanitize(mut s: SavedState) -> SavedState {
     }
     s.verb.mix = s.verb.mix.clamp(0.0, 1.0);
     s.verb.ghost = s.verb.ghost.clamp(0.0, 1.0);
-    s.verb.rt60 = s.verb.rt60.clamp(0.05, 60.0);
+    // The honest ceiling: rt60_probe measured decay saturating near 7 s, so
+    // anything a preset asks for beyond 8 was never real.
+    s.verb.rt60 = s.verb.rt60.clamp(0.05, 8.0);
     s.verb.damp = s.verb.damp.clamp(0.0, 0.99);
     s.verb.haunt = s.verb.haunt.clamp(0.0, 1.0);
     s.melody.rate_hz = s.melody.rate_hz.clamp(0.1, 8.0);
@@ -3725,7 +3727,17 @@ impl eframe::App for App {
             let mut verb_changed = false;
             verb_changed |= ui.add(egui::Slider::new(&mut v.mix, 0.0..=1.0).text("mix")).changed();
             verb_changed |= ui.add(egui::Slider::new(&mut v.ghost, 0.0..=1.0).text("ghost")).changed();
-            verb_changed |= ui.add(egui::Slider::new(&mut v.rt60, 0.05..=20.0).text("rt60 s")).changed();
+            // Honest range with log travel: rt60_probe (2026-08-05) measured
+            // real decay saturating near 7 s — the old 20 s top was two-thirds
+            // lie. Log spacing gives the low seconds the granularity Billy
+            // asked for; equal knob distance = equal decay ratio.
+            verb_changed |= ui
+                .add(
+                    egui::Slider::new(&mut v.rt60, 0.05..=8.0)
+                        .logarithmic(true)
+                        .text("rt60 s"),
+                )
+                .changed();
             verb_changed |= ui.add(egui::Slider::new(&mut v.damp, 0.0..=0.99).text("damp")).changed();
             verb_changed |= ui
                 .horizontal(|ui| {

@@ -23,8 +23,12 @@
 //! - **Diffusion**: two series allpasses per ear with golden-related delays;
 //!   the allpass coefficient is 1/φ = φ − 1 ≈ 0.618.
 //! - **Decay**: per-comb feedback follows the standard RT60 model
-//!   `g = 0.001^(delay / rt60)`, with a one-pole lowpass in each loop for
-//!   high-frequency damping.
+//!   `g = 0.001^(delay / rt60)`. The in-loop lowpass keeps only 1/φ² of the
+//!   damp knob — the knob's voice is the MS-20 bus filter (see the constants
+//!   below) — so the measured T60 holds still while damp turns. Honest range
+//!   0.05–8 s: `examples/rt60_probe.rs` measured real decay saturating near
+//!   7 s (feedback cap + tap-wobble interpolation loss), so the old 20 s top
+//!   commanded nothing.
 //! - **The Ghost Line** (`haunt` > 0): each operator also feeds a delay line
 //!   at the golden interval (φ × its left comb delay) whose recirculation
 //!   path runs through a first-order allpass solved so the design pitch
@@ -104,6 +108,53 @@ impl DcBlock {
         self.x1 = x;
         self.y1 = y;
         y
+    }
+}
+
+// ── The MS-20 move (Billy's sweep, 2026-08-05) ─────────────────────────────
+// The damp knob's voice moved from the comb loops to the wet bus: a resonant
+// 4-pole lowpass (a resonant 2-pole SVF into a plain 2-pole, 24 dB/oct with
+// one peak) feeding straight into the tanh — filter into saturator, which is
+// the MS-20's own topology and why it sings rather than merely darkens. The
+// filter lives OUTSIDE the comb loops on purpose: a resonant peak inside
+// recirculation multiplies loop gain above the feedback cap and turns the
+// room into an oscillator; on the bus the scream stays bounded by the tanh.
+/// Cutoff at damp 0 — effectively open.
+const FC_MAX_HZ: f32 = 18_000.0;
+/// The cutoff descends this many golden steps across the knob:
+/// `fc = 18 kHz / φ^(10·damp)` ≈ 146 Hz at damp 1.
+const FC_GOLDEN_STEPS: f32 = 10.0;
+/// Below the knee the filter is plain (Butterworth, no peak).
+const Q_BASE: f32 = 0.707_106_8;
+/// Resonance wakes at damp = 1/φ and rises on a convex φ curve to φ⁴ ≈ 6.85
+/// at damp 1 — earned at the extreme, silent below the knee.
+const Q_KNEE: f32 = 1.0 / PHI;
+/// The comb loops keep 1/φ² of the knob for per-pass rolloff — enough that
+/// a damped room still decays dark, small enough that the measured T60
+/// stays close to the commanded rt60 across the knob (rt60_probe found
+/// full in-loop damp shaving ~20% off the real decay).
+const LOOP_DAMP_SCALE: f32 = 1.0 / (PHI * PHI);
+
+/// A trapezoidal (Zavalishin/TPT) state-variable lowpass: stable under
+/// per-sample cutoff sweeps, which the glided damp performs constantly.
+#[derive(Default)]
+struct Svf {
+    ic1: f32,
+    ic2: f32,
+}
+
+impl Svf {
+    /// One lowpass sample. `g = tan(π·fc/fs)`, `k = 1/Q`.
+    fn process(&mut self, x: f32, g: f32, k: f32) -> f32 {
+        let a1 = 1.0 / (1.0 + g * (g + k));
+        let a2 = g * a1;
+        let a3 = g * a2;
+        let v3 = x - self.ic2;
+        let v1 = a1 * self.ic1 + a2 * v3;
+        let v2 = self.ic2 + a2 * self.ic1 + a3 * v3;
+        self.ic1 = 2.0 * v1 - self.ic1;
+        self.ic2 = 2.0 * v2 - self.ic2;
+        v2
     }
 }
 
@@ -292,6 +343,9 @@ pub struct StereoVerb {
     /// of the input blockers.
     wet_dc_l: DcBlock,
     wet_dc_r: DcBlock,
+    /// The MS-20 bus filter, two 2-pole stages per ear (see module consts).
+    svf_l: [Svf; 2],
+    svf_r: [Svf; 2],
 }
 
 impl StereoVerb {
@@ -327,6 +381,8 @@ impl StereoVerb {
             dc: (0..NUM_OPS).map(|_| DcBlock::new()).collect(),
             wet_dc_l: DcBlock::new(),
             wet_dc_r: DcBlock::new(),
+            svf_l: [Svf::default(), Svf::default()],
+            svf_r: [Svf::default(), Svf::default()],
         }
     }
 
@@ -392,13 +448,17 @@ impl StereoVerb {
         }
         let mut wet_l = 0.0;
         let mut wet_r = 0.0;
+        // In-loop damping keeps only 1/φ² of the knob: the knob's voice is
+        // the bus filter below, and a full-strength loop lowpass was quietly
+        // shortening the real decay (rt60_probe, 2026-08-05).
+        let loop_damp = self.damp_s * LOOP_DAMP_SCALE;
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
             let x =
                 self.dc[i].process(sends[i] + self.haunt_s * haunted[from]) * COMB_INPUT_GAIN;
-            wet_l += self.combs_l[i].process(x, self.damp_s);
-            wet_r += self.combs_r[i].process(x, self.damp_s);
+            wet_l += self.combs_l[i].process(x, loop_damp);
+            wet_r += self.combs_r[i].process(x, loop_damp);
         }
         let scale = WET_MAKEUP_GAIN / NUM_OPS as f32;
         wet_l *= scale;
@@ -409,6 +469,21 @@ impl StereoVerb {
         for ap in self.ap_r.iter_mut() {
             wet_r = ap.process(wet_r);
         }
+        // The MS-20 move: the damp knob is a resonant 4-pole lowpass on the
+        // wet bus, feeding straight into the tanh — filter into saturator,
+        // the MS-20's own topology. Cutoff descends ten golden steps across
+        // the knob; resonance wakes at the 1/φ knee and rises on a convex φ
+        // curve to φ⁴. Stage two is plain (k = 2), so the slope is 24 dB/oct
+        // with a single peak.
+        let fc = FC_MAX_HZ * PHI.powf(-FC_GOLDEN_STEPS * self.damp_s);
+        let g = (core::f32::consts::PI * fc / self.sample_rate).tan();
+        let knee = ((self.damp_s - Q_KNEE) / (1.0 - Q_KNEE)).clamp(0.0, 1.0);
+        let q = Q_BASE + (PHI.powi(4) - Q_BASE) * knee.powf(PHI);
+        let k1 = 1.0 / q;
+        wet_l = self.svf_l[0].process(wet_l, g, k1);
+        wet_l = self.svf_l[1].process(wet_l, g, 2.0);
+        wet_r = self.svf_r[0].process(wet_r, g, k1);
+        wet_r = self.svf_r[1].process(wet_r, g, 2.0);
         // The wet bus saturates smoothly instead of clipping hard: a
         // haunted room may growl, but it may not click. The dry path stays
         // untouched — no compression or saturation ever touches the
@@ -572,6 +647,76 @@ mod tests {
             long >= short * 0.8,
             "long rt60 must not be quieter (short {short}, long {long})"
         );
+    }
+
+    /// Measure the room's real T60 the way `examples/rt60_probe.rs` does:
+    /// charge, cut, time the fall to −60 dB in 100 ms RMS windows.
+    fn measured_t60(rt60: f32, damp: f32) -> f32 {
+        let mut verb = configured(RatioMode::Golden);
+        verb.set_params(VerbParams {
+            mix: 1.0,
+            rt60,
+            damp,
+            haunt: 0.0,
+            ..VerbParams::default()
+        });
+        let mut level0 = 0.0f64;
+        for n in 0..96_000 {
+            let x = (core::f32::consts::TAU * 65.0 * n as f32 / SR).sin() * 0.5;
+            let (l, r) = verb.process(&impulse_frame(x));
+            level0 = level0 * (1.0 - 1e-4) + 1e-4 * (0.5 * (l * l + r * r)) as f64;
+        }
+        let target = level0 * 1e-6;
+        for w in 0..100 {
+            let mut acc = 0.0f64;
+            for _ in 0..4800 {
+                let (l, r) = verb.process(&impulse_frame(0.0));
+                acc += (0.5 * (l * l + r * r)) as f64;
+            }
+            if acc / 4800.0 <= target {
+                return (w + 1) as f32 * 0.1;
+            }
+        }
+        f32::INFINITY
+    }
+
+    /// The decay the knob commands is the decay the room performs, and damp
+    /// no longer shortens it: the in-loop lowpass keeps only 1/φ² of the
+    /// knob, the rest of damp's voice living on the bus filter *outside* the
+    /// loops (rt60_probe found full in-loop damp shaving ~20% off the tail).
+    #[test]
+    fn commanded_decay_is_real_and_damp_invariant() {
+        let plain = measured_t60(2.0, 0.0);
+        let damped = measured_t60(2.0, 0.9);
+        assert!(
+            (1.5..=2.8).contains(&plain),
+            "commanded 2 s measured {plain} s"
+        );
+        assert!(
+            (damped - plain).abs() <= 0.3,
+            "damp moved the decay: {plain} s plain vs {damped} s damped"
+        );
+    }
+
+    /// The MS-20 bus filter at full damp — cutoff ten golden steps down,
+    /// resonance at φ⁴ — must growl, never blow up: the filter sits outside
+    /// the comb loops precisely so its peak cannot multiply loop gain.
+    #[test]
+    fn resonant_damp_screams_but_never_runs_away() {
+        let mut verb = configured(RatioMode::Golden);
+        verb.set_params(VerbParams {
+            mix: 1.0,
+            rt60: 8.0,
+            damp: 0.99,
+            haunt: 1.0,
+            ..VerbParams::default()
+        });
+        for n in 0..480_000 {
+            let x = (core::f32::consts::TAU * 65.0 * n as f32 / SR).sin() * 0.8;
+            let (l, r) = verb.process(&impulse_frame(x));
+            assert!(l.is_finite() && r.is_finite(), "blew up at {n}");
+            assert!(l.abs() < 10.0 && r.abs() < 10.0, "runaway at {n}");
+        }
     }
 
     #[test]
