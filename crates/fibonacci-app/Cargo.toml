@@ -1,6 +1,6 @@
 [package]
 name = "fibonacci-app"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 # The instrument's name (by mistype, kept forever). Also conveniently means
