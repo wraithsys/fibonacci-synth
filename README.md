@@ -994,33 +994,26 @@ Panels:
 4. Preset save/load; algorithm roster growth to 8 (then 13); WASAPI
    exclusive mode / ASIO if latency demands it; the 11 avatar PNGs (Billy)
 
-### ⚑ Before this repository is made public
+### The Xilla history rewrite — DONE (2026-08-05)
 
-**The git history still contains an unlicensed font.** Xilla was the UI face for the
-whole design pass, committed as `crates/fibonacci-gui/assets/font.otf` in `0419ee7`
-(3 Aug 2026) and carried in every tree from there to the font swap. The working tree
-is clean — the twelve-face roster replaced it and the file is deleted — but **deleting
-a file does not remove it from history, and publishing the repository publishes the
-font.**
+The unlicensed Xilla font — blob `b0feb582647dd9eb951331d1c2157739a680f5b6`,
+7,424 bytes at `crates/fibonacci-gui/assets/font.otf`, committed in `0419ee7`
+and carried by 30 commits — was stripped from all history with
+`git-filter-repo` on 2026-08-05, on Billy's instruction and with a full
+backup bundle taken first. **Publication is no longer gated on history.**
 
-Billy's decision (2026-08-05): a private repo is not an exposure, so the rewrite is
-**deferred rather than done**. It becomes required the moment publication is on the
-table, and it has to happen *before* the repo flips, not after.
+Verified, not assumed: the path appears in zero commits on any ref; the blob
+is unreachable locally (fsck-clean after repack) and **404s from GitHub's
+API**; the commit count is unchanged (46, `0419ee7` survives rewritten — it
+also touched `DESIGN.md` and `main.rs`); and the tip's tree hash was
+byte-identical before and after (`3b17243d…`), so no shipped content moved by
+a single byte. Because a force-push does not purge GitHub — unreachable
+objects stay fetchable by SHA until garbage collection — the old repository
+was deleted (by Billy, in the web UI) and this one created fresh under the
+same name. **Every clone made before the rewrite is orphaned: re-clone,
+never pull.**
 
-What it takes, if that day comes:
-
-- One blob, `b0feb582647dd9eb951331d1c2157739a680f5b6`, 7,424 bytes, at one path that
-  never moved. Rewriting strips it from **30 of the 33 commits**; `0419ee7` also
-  touched `DESIGN.md` and `main.rs`, so it survives the pass rather than being pruned.
-- `git-filter-repo` is the right tool and needs a Python install; `git filter-branch
-  --index-filter` is built in and is safe at this scale — one path, one linear branch,
-  123 KiB.
-- **A force-push does not purge GitHub.** Unreachable objects stay fetchable by SHA
-  until GitHub garbage-collects. Deleting the repo and pushing the rewritten history
-  to a fresh one is the only move that is immediate and complete.
-- Every hash from `0419ee7` onward changes, so any other clone must be re-cloned
-  rather than pulled.
-
-The same rule applies to anything else that reaches history: `assets/fonts/<slug>/`
-is gated on a `LICENSE.txt` and two tests enforce it, but the loose `.jpg` sources
-and `docs/` in the working tree are deliberately untracked for exactly this reason.
+The standing rule survives the rewrite: nothing reaches history without its
+licence. `assets/fonts/<slug>/` is gated on a `LICENSE.txt` and two tests
+enforce it; the loose `.jpg` sources and `docs/` in the working tree remain
+deliberately untracked for exactly this reason.

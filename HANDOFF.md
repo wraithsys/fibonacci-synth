@@ -143,14 +143,15 @@ ear/eye-verdicted by Billy).** His notes live at
 **Billy's items**: the eleven portrait images (brief written, he is on it);
 Space Z's rethink; 1-bit icon/sigil; starter-preset bank; roster-to-8.
 
-**⚑ THE ONE GATE ON GOING PUBLIC.** Xilla is out of the working tree but
-**still in git history** since `0419ee7` — 30 of 33 commits carry it.
-Billy's call (2026-08-05): a private repo is not an exposure, so the
-history rewrite is **deferred, not cancelled**. It becomes mandatory the
-moment publication is on the table and must happen *before* the repo flips.
-Full procedure, tooling and the GitHub caveat (a force-push does **not**
-purge it) are in README's "Before this repository is made public". Do not
-quietly do this rewrite on your own initiative — Billy wants to watch it.
+**THE GATE IS CLEARED (2026-08-05).** The Xilla history rewrite is done, on
+Billy's instruction: git-filter-repo stripped the blob from all 46 commits,
+the old GitHub repo was deleted (Billy, web UI) and a fresh private one
+pushed under the same name — because a force-push alone does not purge
+GitHub. Verified: path in zero commits, blob 404s from GitHub's API, tip
+tree hash byte-identical across the rewrite. Full record in README's "The
+Xilla history rewrite — DONE". **Any clone from before 2026-08-05 evening
+is orphaned: re-clone, never pull** — that includes Billy's laptop.
+Publication now waits only on content and release engineering.
 
 **Fonts — DONE (2026-08-05).** Twelve faces in `assets/fonts/<slug>/`, each
 with its `LICENSE.txt`, roster and credits in `assets/fonts/NOTICE.md`.
