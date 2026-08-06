@@ -19,9 +19,9 @@ all complete; the instrument works, sounds right, and Billy loves it. This
 was Billy's Rust-over-C++ trial and his first release ambition, fulfilled:
 "complete it and make it available to people."
 
-**v1.0.2 is in progress (2026-08-06)** — Billy's "shareable release". It is
-NOT released; five commits sit local and unpushed at his instruction, and he
-wants more changes in before it goes. Section below.
+**v1.0.2 is built and unreleased (2026-08-06)** — Billy's "shareable release".
+Everything in scope is done and pushed; what remains is the release procedure
+itself, and three of its steps are his alone. Section below.
 
 Workspace: `fibonacci-dsp` (pure DSP, allocation-free audio path),
 `fibonacci-app` (REPL shell), `fibonacci-gui` (the 1-bit egui face, binary
@@ -110,12 +110,23 @@ Two traps that have each already cost a session's opening hour:
    path. The Room's wet bus may growl (tanh), never click. The
    discouragement system is presentational ONLY — nothing resists,
    nothing degrades.
-7. **No new controls**: new behaviors ride existing knobs (haunt carries
-   cross-feed/Haas in the future Room). ⚑ Three deferred v1.0.2 asks — the
-   audio pane, the MIDI page, HARMONY mode — add surface. The presets pane
-   is the precedent for how: a *pane*, opened from a header chip, not new
-   knobs on the face. Raise the tension with Billy rather than resolving it
-   quietly.
+7. **Controls are amounts, never structures.** Reworded 2026-08-06, replacing
+   "no new controls" — which was a proxy the same way "it drones" was. A
+   control may scale, spread or intensify a relationship the architecture
+   already derives; it may never let you *specify* one. New controls are
+   welcome when they open an **axis** of the existing architecture, and
+   forbidden when they add an **object** standing outside it.
+
+   That distinction is the useful part, and it names why an independent LFO
+   always felt tacked on: it is a new object, with a rate derived from
+   nothing, belonging to nothing. An ADSR is worse — four numbers describing
+   a curve the instrument should have worked out from what it already knows.
+   `field` and `curve` passed this test; both are amounts.
+
+   And any coupling a control introduces must be **derived from whatever
+   generated the thing it couples**. A synth has no physics, so a coupling
+   from nowhere is a gimmick; here the relationships come from the same
+   recursion that built the architecture, which is what does physics' job.
 8. **Strict 1-bit UI, no anti-aliasing** (feathering off; OS theme pinned
    — never let system light mode in). Dither = brightness.
 
@@ -123,17 +134,95 @@ Two traps that have each already cost a session's opening hour:
 
 The centerpiece is **quartered**: X controls (with a fake `PARAMETERS`
 window title bar), Y the Logalith, Z the record card, W the voice. Both
-cuts golden. 87 tests green.
+cuts golden. **106 tests green.**
+
+## THE FIELD — the biggest thing in v1.0.2, and it was not in scope
+
+Read `crates/fibonacci-dsp/src/breath.rs` first; it carries the full model.
+This section is why it exists, which the code cannot say.
+
+Billy, playing the finished v1.0.2 work: *"the more i've played with the synth
+the more i realise it's not a drone synth — it's actually just an incredibly
+versatile synth that doesn't fall into any of the usual versatility traps."*
+The conversation that followed changed what the instrument thinks it is, and
+it is worth having in full before touching any of this.
+
+**The identity was never "it drones".** It is that **every control is an
+amount and none is a structure** — you never choose an operator ratio, a
+topology, a level, a comb time or a chamber count, because all of them are
+derived. "It drones" was a *consequence* of that, and so was "no envelopes".
+Both were proxies, and both got reworded on 2026-08-06 (Laws 4 and 7) once the
+thing underneath them was named.
+
+**What the instrument was missing was a time axis.** It already derives in
+frequency (operators at φ, ρ, Fibonacci ratios) and in space (the Room's comb
+times). Everything else happened simultaneously and unanimously. Fluidity,
+harmony mode and the transient shaper — three separate asks in his note — are
+all the same missing thing: *when* things happen relative to each other.
+
+**Why not just an LFO, and why not an envelope.** His answer, measured against
+his own singing voice: *"envelopes just seem kind of binary rather than
+systemic"* — in a real voice, amplitude, pitch and timbre are consequences of
+one web of breath pressure, not three curves nobody has to reconcile. An LFO
+fails the reworded Law 7 for the same reason: a new object, rate derived from
+nothing, belonging to nothing.
+
+So: **one number, four consequences.** `Field::amount` drives the gain, the
+pitch, INDEX (+0.1), and the Room's damping (−0.5) and wet duck (−0.1). That
+coupling is the whole point — Billy found that mix up, field 1, curve
+exponential gives a **low-pass gate**: a Buchla LPG is a vactrol moving
+amplitude and brightness together from one voltage, and this is the same
+topology with FM index where the filter would be. No filter section, no
+envelope section; the pluck is a consequence rather than a module.
+
+**Notes are gestures on the modulation, never on the audio.** A beginning
+restarts the movement and multiplies its depth by φ²; an ending is the same
+gesture at 1/φ. The audio's amplitude is untouched by any of it, which is
+exactly why none of this is an ADSR under another name.
+
+**Four bugs Billy found by playing, each now a test** — worth reading as a set,
+because they are all the same species:
+
+1. *"seems to cap out at 0.3"* — depth multiplied then clamped, so the control
+   was inert above 1/φ² whenever notes arrived.
+2. *"can i hear amp dynamics at 8hz — not really"* — a fixed 987 ms gesture is
+   re-triggered before it moves at 125 ms note spacing. The gesture is sized
+   from the **measured interval** now, so it fits any tempo.
+3. *"all audio stopped, the scope went blank too"* — NaN, not silence. The
+   field pushed damp negative, the cutoff mapping is exponential, and the
+   cutoff swept up through Nyquist where `tan(π·fc/fs)` has a pole.
+4. *"with mix all the way up i can still hear some of the unaffected signal"* —
+   the field subtracted from `mix`, and below full wet means dry.
+
+Numbers 1 and 4 are one fault twice: **a coupling pushed a control past its own
+edge.** The floor at 0 stopped being silence; mix at 1.0 stopped being fully
+wet. That is now a property test rather than two fixes.
 
 ## The v1.0.2 campaign — Billy's "shareable release"
 
 His brief is a note in his Obsidian vault:
 `C:\Users\bbwra\Documents\Obsidian Vault\v1.0.2.md`, with screenshots
 beside it. He asked for it to be prioritised **with** him, and chose a
-scope: trust + UI polish only. Everything else in that note is explicitly
-out of scope for this release, not forgotten (list below).
+scope: trust + UI polish only. The field, STRIKE and the Law rewordings all
+arrived *after* that, from playing.
 
 **Done (2026-08-06), all verdicted by Billy:**
+
+- **The field and `curve`**, above. **`master` is renamed `floor`** on the
+  face and in the docs — the preset key stays `master_level` on disk so the
+  bank keeps loading. It is a floor now in fact: the field reaches up from it
+  by a *ratio*, which is the only arrangement where the knob at zero is still
+  silence.
+- **STRIKE**, the pad below THE ROOM: a click is a note-on, x overrides
+  `curve` and y the field's depth for that gesture alone. No dragging. The
+  overrides die with the gesture, so the pad borrows the instrument rather
+  than editing it.
+- **The icon is Billy's logo**, white marks on a black tile.
+  `examples/make_icon.rs` builds it (and the itch cover) — it replaced
+  `tools/logo_compose.py`, which needs a Python this machine lacks. The
+  backing is not decoration: the art runs pale-edge to dark-centre, so
+  transparent it *inverts* on a dark taskbar and the solid middle reads as a
+  hole.
 
 - **Preset banks.** A preset is `(bank, name)` now, never a name alone. Root
   of `presets/` is the player's own saves (`MINE` chip); every folder under
@@ -164,20 +253,20 @@ out of scope for this release, not forgotten (list below).
   takes. This converts. Use a **Windows-style path** in `BYPO_SHOT`; the
   seconds split at the *first* colon so a drive letter survives.
 
-**Left in scope: the new logo, and nothing else.** Billy's art is
-`Documents\Obsidian Vault\Untitled design (2).png` — a **greyscale** dithered
-square, so it is not 1-bit and cannot go inside the interface without being
-dithered down first (Law 8). He wants it for **the exe/window icon and the
-itch.io cover**, explicitly *not* in-app. Two open questions he has not
-answered: whether it replaces the Logalith disc or gets composed into the
-same ringed treatment, and how a square becomes a 630×500 cover — pad
-(letterboxed) or crop (loses its edges). The existing icon path captures the
-Logalith from the live renderer via `BYPO_SHOT` and composes with
-`tools/logo_compose.py`; the new art is not a capture, so it needs a
-different route into `icon/icon.ico` and `icon_256.rgba`.
+**Nothing is left in scope.** The logo landed (above); the source art is kept
+beside the generator at `icon/logo_source.png`, and `logalith_1024.png` stays
+next to it because it documents how the old icon was made.
+
+Note for anyone re-reading the art: it is **opaque greyscale squares with
+transparency in the gaps**, not greyscale-on-white and not black-at-varying-
+alpha. Both of those were guessed and both were wrong; sampling the pixels is
+what settled it, and the gradient it revealed is the reason the icon needs an
+opaque backing.
 
 **Deferred out of v1.0.2 by Billy, from the same note** — these are real
-asks, not dead ones:
+asks, not dead ones. Note that **"fluidity" is effectively answered** by the
+field: what remains of it is only the sustained-note behaviour, and Law 4 has
+been reworded so the ground has moved under the original wording.
 
 1. **"Fluidity"** — a natural envelope on MIDI note-on with sustain, or
    paired to the melody rate; "more like a compressor bloom than anything
@@ -238,8 +327,20 @@ Defender is a different system that scans the file wherever it came from.
   the store page too, not just in the zip; the minimum wording is in
   `assets/fonts/NOTICE.md` and is already in the draft.
 
-**Before publishing**: bump the crates to 1.0.2 (they are at 1.0.1),
-`pwsh tools/package.ps1 -Smoke`, submit the hash, wait, then upload.
+**The release procedure, and where it stands.** Crates are at **1.0.2** and
+the zip is built. What is left is Billy's alone and cannot be done for him:
+
+1. ~~bump the crates~~ — done.
+2. ~~`pwsh tools/package.ps1 -Smoke`~~ — done; the zip and its
+   `SHA256SUMS.txt` are in `dist/`.
+3. **Submit that exe's SHA-256** to <https://www.microsoft.com/wdsi/filesubmission>
+   as a *software developer*, with the detection name
+   `Trojan:Win32/Wacatac.C!ml`. Per file hash, so it must be this build.
+   Tied to his identity; nobody else can send it.
+4. **Wait for it to clear** before announcing.
+5. **Upload** to itch.io and the GitHub release. His accounts.
+
+Do not offer to do 3–5. Prepare everything for them and hand them over.
 
 **The Controls & UI sweep — DONE (2026-08-05, all 13 items, every one
 ear/eye-verdicted by Billy).** His notes live at

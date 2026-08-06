@@ -33,6 +33,12 @@ use std::io::Write;
 const SIZES: [u32; 6] = [16, 24, 32, 48, 64, 128];
 const BIG: u32 = 256;
 
+/// itch.io wants 630×500. The mark is square, so it is padded rather than
+/// cropped — Billy's call: the whole burst survives, sitting in a field of the
+/// same black the icon uses, and a store page is one placeç©º space reads as
+/// confidence rather than waste.
+const COVER: (u32, u32) = (630, 500);
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(input) = args.first().cloned() else {
@@ -117,8 +123,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .join("/"),
         total + 6 + entries.len() * 16
     );
+    // The store cover, when asked for.
+    if args.iter().any(|a| a == "--cover") {
+        let (cw, ch) = COVER;
+        // The mark fills the short axis with a golden margin left around it.
+        let side = ((ch as f32) / PHI_MARGIN) as u32;
+        let mark = resize(&src, w, h, side, side);
+        let field = bg.unwrap_or(0);
+        let mut cover = vec![0u8; (cw * ch * 4) as usize];
+        for px in cover.chunks_mut(4) {
+            px[0] = field;
+            px[1] = field;
+            px[2] = field;
+            px[3] = 255;
+        }
+        let ox = (cw - side) / 2;
+        let oy = (ch - side) / 2;
+        for y in 0..side {
+            for x in 0..side {
+                let s = ((y * side + x) * 4) as usize;
+                let d = (((y + oy) * cw + x + ox) * 4) as usize;
+                let a = mark[s + 3] as u32;
+                for c in 0..3 {
+                    cover[d + c] =
+                        ((mark[s + c] as u32 * a + field as u32 * (255 - a)) / 255) as u8;
+                }
+            }
+        }
+        let png = encode_png(&cover, cw, ch)?;
+        std::fs::write(dir.join("cover_630x500.png"), &png)?;
+        println!("{}  {cw}x{ch}", dir.join("cover_630x500.png").display());
+    }
     Ok(())
 }
+
+/// How much of the cover's short axis the mark leaves as margin: φ, so the
+/// burst occupies 1/φ of the height and the rest is air.
+const PHI_MARGIN: f32 = 1.618_034;
 
 fn read_png(path: &str) -> Result<(u32, u32, Vec<u8>), Box<dyn std::error::Error>> {
     let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path)?));
