@@ -7,6 +7,14 @@ edition = "2021"
 name = "blow-your-phase-off-gui"
 path = "src/main.rs"
 
+# `cargo test` does not run an example's own tests unless it is told to, and a
+# test that only runs when someone remembers to ask for it is not a test. The
+# PPM parser has four, covering the shapes a capture can arrive in.
+[[example]]
+name = "ppm_to_png"
+path = "examples/ppm_to_png.rs"
+test = true
+
 [dependencies]
 fibonacci-dsp = { path = "../fibonacci-dsp", features = ["serde"] }
 anyhow = "1"
