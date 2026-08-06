@@ -614,6 +614,39 @@ New on 2026-08-06:
   active button turned out to be 88% white when the pixels were actually
   measured. Crop and sample before reporting a rendering bug.
 
+Added later the same day, and the first two are the expensive ones:
+
+- **`perl -0pi` without `-CSD` mangles UTF-8 exactly as `Get-Content -Raw`
+  does.** It double-encoded every φ, ρ, × and — in `breath.rs` and `voice.rs`
+  — 46 characters across two files. The existing warning named PowerShell, so
+  it read as a PowerShell problem; it is a *tooling* problem and any byte-wise
+  editor will do it. Recovered losslessly by a latin-1 round-trip: read as
+  UTF-8, emit every char ≤ U+00FF as a raw byte and everything else as its
+  UTF-8 bytes, then decode the result as UTF-8. That also passes correctly
+  encoded text through untouched, so a half-mangled file repairs in one pass.
+  **Always `-CSD`.** Better: use the Edit tool.
+- **A regression test that has not been run against the bug is a guess**, and
+  two in a row here were. The field's zipper test measured the audio *after*
+  the parameter changed and passed against the broken code, because the step
+  lands *at* the block boundary. The second version spanned the boundary and
+  still passed, because five carriers reaching 754 Hz have a steeper
+  per-sample slope than the step hiding inside them. Only the third — watching
+  `Frame.master`, which is the field's gain and carries no signal at all —
+  actually failed without the fix, at 0.059 against a 0.001 threshold.
+  **Revert the fix and watch the test fail before trusting it.** Same applies
+  to the Room's NaN crash, where reverting each of two candidate fixes
+  separately proved only one of them was the cause, and the comment now says
+  so instead of claiming both.
+- **`cargo run` starts in the workspace root, not the crate.** A relative
+  `create_dir_all("icon")` in an example built a stray `icon/` beside
+  `Cargo.toml` and left the real one untouched through four regenerations —
+  the only clue was that the preview kept showing the old art. Anchor to
+  `env!("CARGO_MANIFEST_DIR")`.
+- **Measure the image, do not describe it.** Billy's logo was called
+  greyscale-on-white, then black-at-varying-alpha, and is neither: opaque
+  greyscale squares with transparency in the gaps. Two confident wrong answers
+  before anyone sampled a pixel.
+
 ## Tone
 
 Billy gushes when happy and says "kooky" when brilliant. He found every
