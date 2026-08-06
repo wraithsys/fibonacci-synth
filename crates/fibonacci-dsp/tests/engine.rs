@@ -422,3 +422,56 @@ fn a_shut_field_is_exactly_master() {
 
     assert_eq!(a, b, "a shut field still answered a note");
 }
+
+/// **Billy's crash, 2026-08-06**: field open, then reduce damp — all audio
+/// stopped and the scope went blank, which is the signature of NaN rather
+/// than silence.
+///
+/// Two independent runaways, both from the field subtracting past zero. The
+/// cutoff mapping is exponential, so a damp of −0.5 asked for ~200 kHz; past
+/// Nyquist `tan(π·fc/fs)` is negative and a TPT SVF with negative `g` diverges.
+/// And in-loop damping below zero is a high-frequency *boost* inside a comb at
+/// 0.985 feedback.
+///
+/// Sweeps the whole damp range, at every field position, with the Room wide
+/// open — and demands every sample stay finite and bounded.
+#[test]
+fn the_room_survives_the_field_pushing_damp_below_zero() {
+    for &field in &[0.0_f32, 0.5, 1.0] {
+        for &damp in &[0.0_f32, 0.05, 0.2, 0.5, 1.0] {
+            let mut patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+            patch.field = field;
+            let mut voice = Voice::new(SR, patch);
+            voice.set_freq_hz(110.0);
+            let mut verb = StereoVerb::new(SR);
+            verb.configure(voice.patch(), voice.compiled());
+            verb.set_params(VerbParams {
+                mix: 1.0,
+                damp,
+                rt60: 8.0,
+                haunt: 1.0,
+                ghost: 1.0,
+            });
+
+            let mut peak = 0.0f32;
+            for block in 0..40 {
+                // Notes, so the field is at its most extreme rather than
+                // resting — the boost is what drives damp furthest negative.
+                voice.glide_to_hz(110.0);
+                voice.render_frames(4800, |_, frame| {
+                    let (l, r) = verb.process(frame);
+                    assert!(
+                        l.is_finite() && r.is_finite(),
+                        "field {field} damp {damp}: the room went to NaN at block {block}"
+                    );
+                    peak = peak.max(l.abs()).max(r.abs());
+                });
+            }
+            // tanh bounds the wet bus, so nothing may exceed it by much.
+            assert!(
+                peak < 4.0,
+                "field {field} damp {damp}: the room ran away to {peak}"
+            );
+        }
+    }
+}

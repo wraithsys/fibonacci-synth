@@ -126,6 +126,27 @@ impl DcBlock {
 // room into an oscillator; on the bus the scream stays bounded by the tanh.
 /// Cutoff at damp 0 — effectively open.
 const FC_MAX_HZ: f32 = 18_000.0;
+/// The lowest the cutoff may reach, however far the field pushes the knob.
+///
+/// **The control is deliberately dishonest at its edges** (Billy, 2026-08-06:
+/// "make the control dishonest — the cutoff can't go below idk 20 hz whilst
+/// being effected but damp at 0 doesn't have to be anywhere near 20hz").
+///
+/// The field subtracts from `damp`, and the knob's own number is not what the
+/// filter obeys — the cutoff obeys this range. Unbounded it is a crash, not a
+/// curiosity: the mapping is exponential, `18 kHz · φ^(−10·damp)`, so a `damp`
+/// of −0.5 asks for **200 kHz**, and the field reaches that easily. The SVF's
+/// coefficient is `g = tan(π·fc/fs)`, and as the cutoff sweeps up through
+/// Nyquist that argument sweeps through π/2, where the tangent **diverges to
+/// infinity**. One infinite coefficient and the whole room is NaN: no audio
+/// and a blank scope, because NaN is not quiet, it is absent. Billy found it
+/// by reducing damp with the field open, which walks the cutoff straight
+/// across the singularity.
+const FC_MIN_HZ: f32 = 20.0;
+/// Ceiling on the cutoff as a fraction of the sample rate, so the filter stays
+/// stable on a device running below 40 kHz where 18 kHz alone would already be
+/// past Nyquist.
+const FC_MAX_NYQUIST_FRACTION: f32 = 0.45;
 /// The cutoff descends this many golden steps across the knob:
 /// `fc = 18 kHz / φ^(10·damp)` ≈ 146 Hz at damp 1.
 const FC_GOLDEN_STEPS: f32 = 10.0;
@@ -472,7 +493,15 @@ impl StereoVerb {
         // In-loop damping keeps only 1/φ² of the knob: the knob's voice is
         // the bus filter below, and a full-strength loop lowpass was quietly
         // shortening the real decay (rt60_probe, 2026-08-05).
-        let loop_damp = damp * LOOP_DAMP_SCALE;
+        // Never negative — a precaution rather than a diagnosed fault. In-loop
+        // damping is a one-pole whose HF gain is (1−d)/(1+d); below zero that
+        // is a *boost*, ~1.5× at the depths the field reaches, sitting inside a
+        // comb whose feedback runs to 0.985. That product exceeds unity, which
+        // is the shape of a runaway even though the crash Billy hit was the
+        // cutoff singularity alone (verified by reverting each fix separately:
+        // only the unclamped cutoff reproduced it). The field opening the
+        // damping should brighten the room, never arm it.
+        let loop_damp = damp.max(0.0) * LOOP_DAMP_SCALE;
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
@@ -496,7 +525,10 @@ impl StereoVerb {
         // the knob; resonance wakes at the 1/φ knee and rises on a convex φ
         // curve to φ⁴. Stage two is plain (k = 2), so the slope is 24 dB/oct
         // with a single peak.
-        let fc = FC_MAX_HZ * PHI.powf(-FC_GOLDEN_STEPS * damp);
+        // Bounded, not because the coupling should stop but because the filter
+        // cannot be more open than open. See FC_MIN_HZ.
+        let fc = (FC_MAX_HZ * PHI.powf(-FC_GOLDEN_STEPS * damp))
+            .clamp(FC_MIN_HZ, FC_MAX_HZ.min(FC_MAX_NYQUIST_FRACTION * self.sample_rate));
         let g = (core::f32::consts::PI * fc / self.sample_rate).tan();
         let knee = ((damp - Q_KNEE) / (1.0 - Q_KNEE)).clamp(0.0, 1.0);
         let q = Q_BASE + (PHI.powi(4) - Q_BASE) * knee.powf(PHI);
