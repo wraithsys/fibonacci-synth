@@ -12,17 +12,42 @@ Fibonacci recursion generates the patch architecture; golden-ratio
 inharmonicity is the identity ("endlessly ghostly, not big and bassy").
 Entity/mascot: **the Logalith** (a chambered-nautilus logarithmic spiral —
 deliberately NOT the golden-spiral myth). **Public repo**:
-`wraithsys/fibonacci-synth` — **v1.0.0 SHIPPED 2026-08-05**, MIT, portable
-Windows zip + 32 demo renders on the GitHub release. Milestones 1–3, the
-full design pass, the controls sweep and release engineering are all
-complete; the instrument works, sounds right, and Billy loves it. This was
-Billy's Rust-over-C++ trial and his first release ambition, fulfilled:
+`wraithsys/fibonacci-synth` — **v1.0.0 and v1.0.1 SHIPPED 2026-08-05**, MIT,
+portable Windows zip + 32 demo renders on the GitHub release. Milestones
+1–3, the full design pass, the controls sweep and release engineering are
+all complete; the instrument works, sounds right, and Billy loves it. This
+was Billy's Rust-over-C++ trial and his first release ambition, fulfilled:
 "complete it and make it available to people."
 
-Workspace: `fibonacci-dsp` (pure DSP, 34 tests, allocation-free audio
-path), `fibonacci-app` (REPL shell), `fibonacci-gui` (the 1-bit egui face,
-binary `blow-your-phase-off-gui`). Run: `cargo run --release -p
-fibonacci-gui`. It drones immediately by design.
+**v1.0.2 is in progress (2026-08-06)** — Billy's "shareable release". It is
+NOT released; five commits sit local and unpushed at his instruction, and he
+wants more changes in before it goes. Section below.
+
+Workspace: `fibonacci-dsp` (pure DSP, allocation-free audio path),
+`fibonacci-app` (REPL shell), `fibonacci-gui` (the 1-bit egui face, binary
+`blow-your-phase-off-gui`). Run: `cargo run --release -p fibonacci-gui`. It
+drones immediately by design. **87 tests green** across the workspace.
+
+## Before you touch anything, on any machine
+
+Two traps that have each already cost a session's opening hour:
+
+1. **Is this clone orphaned?** The Xilla history rewrite (2026-08-05)
+   changed every commit hash. Run
+   `git rev-list --left-right --count HEAD...origin/master` — a large
+   ahead+behind split with *duplicate commit messages* on both sides means
+   you are on the dead pre-rewrite line, which still carries the blob.
+   Re-point with `git reset --hard origin/master`; never pull or merge.
+   The laptop was exactly this on 2026-08-06 (41 ahead / 52 behind, tree
+   byte-identical to its rewritten twin, so nothing was lost).
+2. **Does `.cargo/config.toml` exist, and does its linker path name *this*
+   machine's user?** It is **untracked as of 2026-08-06** and each machine
+   keeps its own. Without it you get the default MSVC linker, which works
+   — you only lose the LLD speedup. With a *stale* one you get
+   `error: linker ... not found`, and rustc's follow-on note about
+   `link.exe` and Visual Studio is a red herring: VS and the SDK are
+   installed and fine on both machines. Desktop user is `akind`, laptop
+   `bbwra`.
 
 ## How to work with Billy (this made the session excellent)
 
@@ -60,7 +85,11 @@ fibonacci-gui`. It drones immediately by design.
 3. **Roster counts are Fibonacci**: algorithms 5 (→8→13), ratio modes 5,
    melodic tunings 5, scales 8, comb leaves in the future Room 8.
 4. **No envelopes, ever.** It drones. Off switches are true resets
-   (fade ~2 ms then zero phase/state), tested.
+   (fade ~2 ms then zero phase/state), tested. ⚑ **Under challenge by
+   Billy himself** — the "fluidity" ask in the v1.0.2 note wants a natural
+   envelope on MIDI note-on, "more like a compressor bloom than anything
+   sharp". It is his law to amend and he has not amended it. Do not build
+   toward it until he says so explicitly.
 5. **Determinism**: bit-identical output for identical control sequences,
    chunk-size invariant, tested.
 6. **Sound is sacred**: no compression/saturation/filtering on the dry
@@ -68,7 +97,11 @@ fibonacci-gui`. It drones immediately by design.
    discouragement system is presentational ONLY — nothing resists,
    nothing degrades.
 7. **No new controls**: new behaviors ride existing knobs (haunt carries
-   cross-feed/Haas in the future Room).
+   cross-feed/Haas in the future Room). ⚑ Three deferred v1.0.2 asks — the
+   audio pane, the MIDI page, HARMONY mode — add surface. The presets pane
+   is the precedent for how: a *pane*, opened from a header chip, not new
+   knobs on the face. Raise the tension with Billy rather than resolving it
+   quietly.
 8. **Strict 1-bit UI, no anti-aliasing** (feathering off; OS theme pinned
    — never let system light mode in). Dither = brightness.
 
@@ -76,7 +109,123 @@ fibonacci-gui`. It drones immediately by design.
 
 The centerpiece is **quartered**: X controls (with a fake `PARAMETERS`
 window title bar), Y the Logalith, Z the record card, W the voice. Both
-cuts golden. 75 tests green.
+cuts golden. 87 tests green.
+
+## The v1.0.2 campaign — Billy's "shareable release"
+
+His brief is a note in his Obsidian vault:
+`C:\Users\bbwra\Documents\Obsidian Vault\v1.0.2.md`, with screenshots
+beside it. He asked for it to be prioritised **with** him, and chose a
+scope: trust + UI polish only. Everything else in that note is explicitly
+out of scope for this release, not forgotten (list below).
+
+**Done (2026-08-06), all verdicted by Billy:**
+
+- **Preset banks.** A preset is `(bank, name)` now, never a name alone. Root
+  of `presets/` is the player's own saves (`MINE` chip); every folder under
+  it is a bank. The folder name is identity, chip label *and* contributor
+  credit at once — rename the folder and all three follow, so nothing in the
+  source knows a contributor's name. **Why it exists:** Billy intends to ask
+  testers who like the instrument for presets and ship them credited in a
+  folder of their own. One `.gitignore` negation per bank replaced 32
+  per-preset lines — a form that had already failed once, with `init.json`
+  un-negated for a whole release. Stock bank is `presets/BYPO/`, 42 presets.
+  Filter chips (`ALL` / `MINE` / one per non-empty bank) fire on a *single*
+  press, the only pane control that does: the double-usage principle guards
+  actions, and a filter is a view. Saves always land in `MINE`; deletes
+  reach anything, Billy's call — "the copy on someone's machine is theirs."
+- **`init` is the default preset**, living in the stock bank as an ordinary
+  preset. Startup: `state.json` → `init` → hardcoded. Resaving `init`
+  changes what a fresh install opens on.
+- **The PRESETS pane lost its window buttons.** They stay on `PARAMETERS`,
+  which is *pretending* to be a utility window; the presets pane genuinely
+  is one you opened and can close, so a dead cross on it is a lie not a
+  costume.
+- **The PITCH readout** (melody panel): is pitch being quantised, and to
+  what. Full model in README. `Tuning::quantization()` is in the **DSP**,
+  beside the tunings, and is tested against what they emit rather than what
+  they declare.
+- **The Defender answer** — README section, below.
+- **`examples/ppm_to_png.rs`** — `BYPO_SHOT` writes PPM, which no storefront
+  takes. This converts. Use a **Windows-style path** in `BYPO_SHOT`; the
+  seconds split at the *first* colon so a drive letter survives.
+
+**Left in scope: the new logo, and nothing else.** Billy's art is
+`Documents\Obsidian Vault\Untitled design (2).png` — a **greyscale** dithered
+square, so it is not 1-bit and cannot go inside the interface without being
+dithered down first (Law 8). He wants it for **the exe/window icon and the
+itch.io cover**, explicitly *not* in-app. Two open questions he has not
+answered: whether it replaces the Logalith disc or gets composed into the
+same ringed treatment, and how a square becomes a 630×500 cover — pad
+(letterboxed) or crop (loses its edges). The existing icon path captures the
+Logalith from the live renderer via `BYPO_SHOT` and composes with
+`tools/logo_compose.py`; the new art is not a capture, so it needs a
+different route into `icon/icon.ico` and `icon_256.rgba`.
+
+**Deferred out of v1.0.2 by Billy, from the same note** — these are real
+asks, not dead ones:
+
+1. **"Fluidity"** — a natural envelope on MIDI note-on with sustain, or
+   paired to the melody rate; "more like a compressor bloom than anything
+   sharp", Fibonacci-derived, drone-compatible. **This collides head-on with
+   Law 4 (no envelopes, ever) and Law 7 (no new controls).** Do not build it
+   without Billy explicitly amending Law 4 — it is his law and his call, and
+   the "bloom not attack" framing may make it legal as a level gesture.
+2. **HARMONY mode** — in THE ROOM's empty lower box. Delays pitch changes
+   *between carriers*, same machinery as melody but range defines the gap
+   between intervals, Fibonacci-integrated. Must read as unusable in
+   algorithms without multiple carriers.
+3. **Audio pane** — output device selection and recording, in the same
+   header-pane idiom as presets, **with ASIO**. Billy says to copy ASIO from
+   other applications "we've made" — nobody in this session's context knows
+   which; ask him for the repo. Constraint worth raising early: cpal's
+   `asio` feature needs the Steinberg SDK plus LLVM/bindgen, and **the SDK
+   cannot be redistributed**.
+4. **MIDI page**, mono only, with MIDI control switched off whenever melody
+   or harmony is active. `midir` is already a dependency.
+5. **OBS** — make the app reachable for demo recording, automated into a
+   scene he has already built.
+
+## Going public: Defender, and how v1.0.2 actually ships
+
+**The exe is deleted on sight by Windows Defender as
+`Trojan:Win32/Wacatac.C!ml`.** Confirmed on Billy's own machine
+(`Get-MpThreatDetection`), not merely reported. This is a false positive and
+the detection name is the evidence: `!ml` means no signature matched — a
+classifier looked at an unsigned binary from an unknown publisher and
+guessed, `Wacatac` is the bucket guesses land in, and the "executes commands
+from an attacker" line is boilerplate for the family. New Rust binaries trip
+it constantly (rust-analyzer; a DLL inside rustc's own std).
+
+Distribution channel does **not** fix this — that is a SmartScreen lever, and
+Defender is a different system that scans the file wherever it came from.
+
+- **The fix is a false-positive submission** to
+  <https://www.microsoft.com/wdsi/filesubmission>, **as a software
+  developer**, with the SHA-256 and the detection name. Free. Only Billy can
+  send it. **Analysis is per file hash**, so clearing v1.0.1 does nothing for
+  the v1.0.2 binary: build the release artifact, submit *that* exe, wait for
+  it to clear, then publish. v1.0.1's exe is
+  `D7A7B97FA649201532CE58CC48E890759EA6AD9486AF1E29B140627CDDDDEF7D`, intact
+  inside the zip in Downloads (Defender ate the extracted copy, not the
+  archived one).
+- **Signing is off the table.** Microsoft's Azure Artifact Signing (renamed
+  from Trusted Signing) is $9.99/month and now takes individual developers —
+  but individual validation is **USA and Canada only**, and Billy is in the
+  **UK**. A traditional OV/EV certificate is still priced for companies.
+- **`package.ps1` writes `<name>-SHA256SUMS.txt` every build**, listing the
+  zip and the exe, in the `<hash>  <name>` coreutils format. The README's
+  safety section is built around it: everything else there asks the reader
+  to trust a claim, and the hash is the one line they can check.
+- **Distribution: itch.io, keeping GitHub Releases** (Billy's call). Page
+  copy, settings, assets and a checklist are drafted at `docs/itch-page.md`
+  — **`docs/` is gitignored**, so it is not in history. The words are a
+  draft for Billy to own. The four **CC BY 4.0** fonts must be credited on
+  the store page too, not just in the zip; the minimum wording is in
+  `assets/fonts/NOTICE.md` and is already in the draft.
+
+**Before publishing**: bump the crates to 1.0.2 (they are at 1.0.1),
+`pwsh tools/package.ps1 -Smoke`, submit the hash, wait, then upload.
 
 **The Controls & UI sweep — DONE (2026-08-05, all 13 items, every one
 ear/eye-verdicted by Billy).** His notes live at
@@ -106,7 +255,8 @@ ear/eye-verdicted by Billy).** His notes live at
 - **Presets moved to a header pane** (the `presets` chip): one box
   filters and names; everything double-confirms (select = dotted bevel,
   confirm = invert until release); saves never overwrite (`~X`
-  suffix); DELETE double-confirms against the highlighted preset.
+  suffix); DELETE double-confirms against the highlighted preset. The
+  pane grew bank chips and lost its window buttons in v1.0.2, above.
 - **Layout**: STRUCTURE panel and the footer scope are gone (scope
   deleted for good on Billy's verdict; drawing code in history at
   `1b80f75^`). SCALE is a view toggle — second press flips the scale
@@ -143,8 +293,12 @@ ear/eye-verdicted by Billy).** His notes live at
 
 ## Open queue
 
-**Billy's items**: starter-preset bank (**nearly done**, 2026-08-05);
-1-bit icon/sigil; roster-to-8. **Portraits are deferred indefinitely past
+**The live queue is the v1.0.2 section above** — the logo is the only item
+left in scope, and Billy wants further changes in before it ships.
+
+**Billy's items**: roster-to-8. The starter bank is **done** (42 presets in
+`presets/BYPO/`) and the 1-bit icon **exists** — the open logo question is
+about replacing it, not creating one. **Portraits are deferred indefinitely past
 v1** (Billy, 2026-08-05: left "unless I decide I want to overcome the
 hurdles of it") — the four unassigned grids and the three unwritten
 characters wait with them, and nothing in the app currently draws them, so
@@ -239,8 +393,19 @@ waiting), the starter bank is his seven presets tracked by explicit
 gitignore negation (new saves stay private; growing the bank = adding a
 negation line on purpose), and `tools/package.ps1 -Smoke` stages, launches
 the exe from a foreign cwd (assets/presets are exe-anchored now), and
-zips. Demo renders attach to releases, never the repo. `.cargo/config.toml`
-is untracked machine-local config — the committed form broke every clone.
+zips. Demo renders attach to releases, never the repo.
+
+Three things about that script were **wrong until 2026-08-06**, all fixed:
+`.cargo/config.toml` was described here as untracked but was in fact still
+tracked — the `.gitignore` line existed and nobody had ever run
+`git rm --cached`, so it did nothing; the bank was gathered by globbing
+`presets\*.json` off the *filesystem* rather than asking git, so a zip built
+on a working machine would have shipped whatever the player saved that
+afternoon; and `smoke-stderr.txt` **shipped inside the v1.0.1 zip**, because
+`Stop-Process -Force` returns before Windows releases the redirect handle,
+the delete failed, and `-ErrorAction SilentlyContinue` swallowed it. The
+capture now lives outside the staging directory, the bank comes from
+`git ls-files`, and a check throws if anything unexpected is staged at all.
 
 **The icon exists (2026-08-05, Billy: "that's it").** The Logalith at
 integrity 0%, captured from the real renderer by the new `BYPO_SHOT`
@@ -259,13 +424,15 @@ every algorithm and all five ratio modes represented, each tracked by
 its own gitignore negation line. v1.0.0 stands beneath it.
 
 **Engineering next**:
-1. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
+1. **Finish v1.0.2** — the logo, then whatever else Billy pulls forward from
+   the deferred list. See the campaign section at the top.
+2. **The recursive Room** — full spec in DESIGN.md: Fibonacci tree over
    8 comb leaves, ghost cross-feed becomes rotation-3 octagram, Haas
    pre-delays from Fibonacci milliseconds, zero new controls. **Parked by
    Billy's explicit call (2026-08-05)**; a future campaign, and a v1.x
    sound change when it comes. Do NOT land it without Billy's ears on
    standby.
-2. Post-release: whatever the public surfaces — issues are open now.
+3. Post-release: whatever the public surfaces — issues are open now.
 
 ## Asset convention (Billy, 2026-08-04)
 
@@ -274,9 +441,11 @@ its own gitignore negation line. v1.0.0 stands beneath it.
 - Anything unconfirmed stays untracked and gets **deleted** once tested,
   not committed "just in case".
 
-Currently untracked and awaiting that sort: 18 loose `.jpg` sources in
-`assets/`, `earth.png`, 14 converted portrait grids in `assets/portraits/`,
-and `docs/`. All are derivatives of material whose licence is not
+Currently untracked and awaiting that sort (**counted 2026-08-06**, the
+previous figures here had drifted): 17 loose `.jpg` sources in `assets/`,
+`earth.png`, and 25 `.txt` files in `assets/portraits/` — 24 grids plus
+Billy's original `zboxtxtportraits.txt` bundle. Also `docs/`, which now
+holds the itch.io page draft. All are derivatives of material whose licence is not
 established. They were deliberately left out of every commit — the same
 discipline that makes Xilla a blocker applies to pictures.
 
@@ -295,7 +464,40 @@ discipline that makes Xilla a blocker applies to pictures.
   by dragging a trembling slider.
 - **Test the mechanic, not the number.** A threshold-with-discharge design
   for agitation was killed by a test proving the discharge could never gate
-  anything at box cadence.
+  anything at box cadence. Same move landed again on 2026-08-06: the
+  quantisation readout is tested by *firing 600 notes per tuning* and
+  counting distinct pitches, not by asserting the labels match.
+
+New on 2026-08-06:
+
+- **`allocate_ui` inherits the parent's layout direction.** Inside
+  `ui.horizontal(...)`, a child allocated for a column lays its contents out
+  *left to right*. The presets pane's first cut put the bank list and the
+  filter chips in one strip running off the edge of the window. Both columns
+  now say `Layout::top_down` explicitly. Billy diagnosed it with a
+  screenshot and the words "the pane is a mess", which was enough.
+- **`cargo test` does not run an example's own tests** unless the target is
+  declared in `Cargo.toml` with `test = true`. Four tests in
+  `examples/ppm_to_png.rs` would otherwise have run only when someone
+  remembered to ask.
+- **Don't put transient files in a directory you are about to archive.** See
+  `smoke-stderr.txt` above — the cleanup raced a file handle and lost, and
+  `-ErrorAction SilentlyContinue` made it silent.
+- **Ask git what ships, not the filesystem.** Same section. Anything that
+  globs a working directory will eventually sweep up user data.
+- **Verify a claim before writing it into public documentation.** Two lines
+  drafted for the README's safety section were pulled on checking: "no
+  registry write" (unprovable across eframe and winit) and a promise of
+  published hashes (not true until it was implemented). The network claim
+  survived *because* it was checked — no networking crate in `Cargo.lock`,
+  no `std::net` in any source, nothing that opens a URL.
+- **Billy may be running the app while you work.** He saved ten presets
+  during the v1.0.2 session. Check timestamps before moving anything under
+  `presets/`, and expect `state.json` to change under you. If a build fails
+  with "failed to remove file ... .exe", that is him: say so and wait.
+- **Downsampled screenshots lie about 1-bit fill.** An "unhighlighted"
+  active button turned out to be 88% white when the pixels were actually
+  measured. Crop and sample before reporting a rendering bug.
 
 ## Tone
 
