@@ -4359,17 +4359,12 @@ impl eframe::App for App {
                             "glide   one-pole, {:.3} s → {:.1} hz",
                             self.shadow.glide_seconds, self.drone_hz
                         ),
-                        format!(
-                            "field   hz/φ¹³ = {:.3} hz, {} sig, floor {:.3}",
-                            fibonacci_dsp::Breath::rate_hz(self.drone_hz),
-                            mode_name(self.shadow.ratio_mode),
-                            master_gain(self.shadow.master_level),
-                        ),
-                        format!(
-                            "curve   φ^({:+.1}) on a {:.3} s return",
-                            4.0 * (self.shadow.curve - 0.5),
-                            0.987
-                        ),
+                        // The field has no line here on purpose. This readout
+                        // holds seven rows at this size; an eighth clips
+                        // against the panel's floor, and a half-drawn model
+                        // reads as a fault rather than as information. Its
+                        // rate and shape are reported to the log when the
+                        // slider is released, and the model is in README.
                     ] {
                         ui.label(
                             egui::RichText::new(line)
