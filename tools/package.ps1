@@ -63,19 +63,54 @@ if ($rel) {
 }
 
 if ($Smoke) {
-    $p = Start-Process -FilePath "$stage\blow-your-phase-off-gui.exe" -WorkingDirectory $env:TEMP -RedirectStandardError "$stage\smoke-stderr.txt" -PassThru
+    # The capture lives OUTSIDE $stage. It used to be written inside it and
+    # deleted before zipping, which worked until it didn't: Stop-Process
+    # -Force returns before Windows releases the redirect handle, so the
+    # delete failed, -ErrorAction SilentlyContinue swallowed it, and
+    # smoke-stderr.txt shipped inside the v1.0.1 zip. A transient file has no
+    # business in the directory you are about to archive.
+    $smokeLog = Join-Path ([IO.Path]::GetTempPath()) "bypo-smoke-stderr.txt"
+    $p = Start-Process -FilePath "$stage\blow-your-phase-off-gui.exe" -WorkingDirectory $env:TEMP -RedirectStandardError $smokeLog -PassThru
     Start-Sleep -Seconds 3
     $alive = -not $p.HasExited
     if ($alive) { Stop-Process -Id $p.Id -Force }
-    $stderr = Get-Content "$stage\smoke-stderr.txt" -Raw -ErrorAction SilentlyContinue
-    Remove-Item "$stage\smoke-stderr.txt" -ErrorAction SilentlyContinue
+    $stderr = Get-Content $smokeLog -Raw -ErrorAction SilentlyContinue
+    Remove-Item $smokeLog -ErrorAction SilentlyContinue
     if (-not $alive) { throw "smoke: the staged exe exited within 3 s`n$stderr" }
     if ($stderr -match "fonts not found") { throw "smoke: staged exe fell back on missing fonts`n$stderr" }
     Write-Host "smoke: staged exe ran from a foreign cwd, all fonts resolved"
     Write-Host ($stderr.Trim())
 }
 
+# Nothing ships that nobody put there on purpose. The include list above is
+# the whole contract, so anything else at the root of $stage is a leak - a
+# stray log, an editor backup, a half-copied asset - and a public zip is the
+# wrong place to discover it.
+$expected = @("blow-your-phase-off-gui.exe", "README.md", "LICENSE", "assets", "presets")
+$strays = Get-ChildItem $stage | Where-Object { $expected -notcontains $_.Name }
+if ($strays) { throw "package: unexpected file(s) staged for the zip - $($strays.Name -join ', ')" }
+
 $zip = "dist\$name-windows-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $stage -DestinationPath $zip
 Write-Host "wrote $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
+
+# Checksums, written every build rather than by hand.
+#
+# This instrument ships unsigned, and Windows Defender's ML classifier calls
+# new unsigned binaries Trojan:Win32/Wacatac.C!ml on sight. Every other
+# reassurance in the README asks the reader to trust a claim; a hash is the
+# one thing they can check for themselves. Both files are listed: the zip is
+# what people download, and the exe is what Defender objects to and what a
+# false-positive submission to Microsoft is keyed on.
+#
+# Format is `<hash>  <name>` - two spaces, the coreutils convention - so
+# `sha256sum -c` accepts the file unmodified. On Windows: Get-FileHash.
+$sums = "dist\$name-SHA256SUMS.txt"
+$lines = foreach ($f in @($zip, "$stage\blow-your-phase-off-gui.exe")) {
+    $h = Get-FileHash $f -Algorithm SHA256
+    "$($h.Hash.ToLower())  $(Split-Path $f -Leaf)"
+}
+Set-Content -Path $sums -Value $lines -Encoding ascii
+Write-Host "wrote $sums"
+$lines | ForEach-Object { Write-Host "  $_" }

@@ -37,6 +37,62 @@ unfoldings, INDEX sweeps, and the Room — are attached to each release
 rather than committed here; `renders/` regenerates them all offline,
 bit-deterministically.
 
+### Windows says this is a virus. It isn't, and here is exactly why
+
+Windows Defender may delete `blow-your-phase-off-gui.exe` on sight and tell
+you it *"contains a virus or potentially unwanted software"*, naming
+something like **`Trojan:Win32/Wacatac.C!ml`**. That is a false positive, and
+the detection name says so if you know how to read it.
+
+The `!ml` on the end means **machine learning**: no virus signature matched.
+A classifier looked at an executable it had never seen before, from a
+publisher it has never heard of, carrying no code-signing certificate, and
+guessed. `Wacatac` is the generic bucket those guesses land in. The
+accompanying line about a program that "executes commands from an attacker"
+is boilerplate attached to the whole family — not a description of anything
+Defender watched this program do.
+
+New Rust binaries trip this constantly. It has happened to rust-analyzer, and
+to a DLL inside the Rust compiler's own standard library. The two things that
+would prevent it — a code-signing certificate and a long download history —
+cost money and time respectively, and this instrument has neither yet. A
+certificate for an individual developer outside the USA and Canada is still
+priced for companies.
+
+So here is what you can actually check, rather than being asked to trust:
+
+- **The source is all here, and it is MIT.** Every line that becomes that
+  binary is in this repository. If you would rather not run a stranger's
+  executable, don't — build it yourself with `cargo build --release -p
+  fibonacci-gui` and run something you compiled.
+- **It does not install anything.** Unzip it anywhere and it runs from that
+  folder. There is no installer, no service, no auto-updater and no
+  uninstaller, because there is nothing to uninstall — delete the folder and
+  it is gone.
+- **It does not touch the network**, and this one you can verify rather than
+  believe: there is no networking crate anywhere in `Cargo.lock`, no
+  `std::net` anywhere in the source, and nothing that opens a URL. No
+  telemetry, no update check, no analytics, no account. The instrument has no
+  idea the internet exists.
+- **What it writes**, it writes beside itself: `presets/` for the presets you
+  save, and `state.json` so it opens where you left it. Nothing else.
+- **Check the hash.** Every release carries a `SHA256SUMS.txt` listing both
+  the zip and the exe inside it. If yours matches, the file reached you as it
+  was built. In PowerShell:
+
+  ```
+  Get-FileHash .\blow-your-phase-off-gui.exe -Algorithm SHA256
+  ```
+
+  That is the one item on this list you can verify instead of believe, which
+  is why it is here.
+
+If you want it out of quarantine: Windows Security → Protection history →
+find the detection → Allow. Only do that if the checks above satisfy you.
+Reporting it to Microsoft as a false positive helps everyone who downloads it
+after you, and takes a minute at
+<https://www.microsoft.com/wdsi/filesubmission>.
+
 ---
 
 ## The mathematical models
