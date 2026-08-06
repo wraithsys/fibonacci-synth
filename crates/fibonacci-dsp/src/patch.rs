@@ -154,6 +154,50 @@ pub struct Patch {
     pub master_level: f32,
     /// Portamento time constant in seconds for pitch changes. 0 = instant.
     pub glide_seconds: f32,
+    /// **The field**, 0..=1: how many dimensions the tree's `depth` coordinate
+    /// expresses itself in (Billy, 2026-08-06 — he named it, and the name is
+    /// the model: a field has a value at every point).
+    ///
+    /// `depth` already projects into *level* (`1/φ^(d-1)`) and *modulation
+    /// index* (`x^(φ^(d-2))`). Every other property of an operator is
+    /// simultaneous with every other operator's — the tree is flat in every
+    /// dimension except loudness and brightness. This control is how far that
+    /// same single coordinate reaches into the others.
+    ///
+    /// Dimensions are recruited at golden thresholds as it climbs, rather than
+    /// all scaling together, so the knob has a journey:
+    ///
+    /// | from | dimension | what `depth` becomes |
+    /// |------|-----------|----------------------|
+    /// | 0 | **time** | when an operator arrives |
+    /// | 1/φ² | *pitch* | when it reaches a new note (reserved) |
+    /// | 1/φ | *position* | where it sits in the room (reserved) |
+    ///
+    /// At 0 the instrument is bit-identical to the one that shipped without
+    /// this, which is why every preset predating it stays exactly as recorded.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub field: f32,
+    /// **The curve**, 0..=1: how the field's trigger boost returns to the
+    /// baseline. A bias control, not a time.
+    ///
+    /// A note — from a key or from the sequencer changing pitch — restarts the
+    /// field's movement and multiplies its depth. This decides the shape of
+    /// the way back down: 0.5 is linear, below is logarithmic (drops away
+    /// fast, then lingers), above is exponential (holds, then falls). The
+    /// exponent runs over `φ^±2`.
+    ///
+    /// The envelope is on the **modulation depth**, never on the audio — which
+    /// is why none of this is an ADSR under another name. The sound has no
+    /// attack and no release; it simply moves more for a while.
+    #[cfg_attr(feature = "serde", serde(default = "half"))]
+    pub curve: f32,
+}
+
+/// Serde default for [`Patch::curve`]: linear return. A preset saved before
+/// the curve existed should come back neither biased nor surprising.
+#[cfg(feature = "serde")]
+fn half() -> f32 {
+    0.5
 }
 
 impl Patch {
@@ -187,6 +231,12 @@ impl Patch {
             rip: 0.0,
             master_level: 0.8,
             glide_seconds: 0.05,
+            // Flat. A new instrument sounds like the one that shipped, and
+            // the field is something you go and find.
+            field: 0.0,
+            // Linear return. The bias is something you reach for, not
+            // something you have to undo.
+            curve: 0.5,
         }
     }
 }

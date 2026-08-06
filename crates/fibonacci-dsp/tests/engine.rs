@@ -83,6 +83,10 @@ fn disabled_op_is_silent_and_out_of_the_path() {
 
     // A pure sine's peak is level × master gain (no modulation to spread
     // energy) — the master knob's rendered gain is position^φ.
+    //
+    // Exact again as of 2026-08-06: master is the field's *floor* rather than
+    // something the field multiplies, and a new patch has the field shut, so
+    // the gain here is precisely master.
     let peak = buf.iter().fold(0.0f32, |p, &x| p.max(x.abs()));
     let expected = master_gain(voice.patch().master_level); // carrier level 1.0, 1 carrier
     assert!(
@@ -356,4 +360,65 @@ fn glide_is_smooth() {
     // At these frequencies adjacent samples of a sine mix can't jump far;
     // a glitch would show up as a near-full-scale step.
     assert!(max_step < 0.2, "output discontinuity during glide: {max_step}");
+}
+
+/// **Master is the field's floor**, not something it multiplies. Whatever the
+/// field is doing, the dry path sits between the master knob and unity — so
+/// the only thing that can take the instrument to silence is a hand on that
+/// knob. Law 4's invariant, asserted on the engine rather than the module.
+#[test]
+fn the_field_fills_the_headroom_above_master_and_never_below_it() {
+    for &field in &[0.0, 0.5, 1.0] {
+        for &level in &[0.25_f32, 0.5, 1.0] {
+            let mut patch = Patch::init(ALGORITHMS[4], RatioMode::Golden); // all carriers
+            patch.field = field;
+            patch.master_level = level;
+            patch.index = 0.0; // pure sines: the peak is the gain
+            let mut voice = Voice::new(SR, patch);
+            voice.set_freq_hz(110.0);
+            let mut buf = vec![0.0f32; SR as usize * 4];
+            voice.render(&mut buf);
+
+            let floor = master_gain(level);
+            // Peak per 50 ms window: the envelope of the movement.
+            let win = (SR * 0.05) as usize;
+            for w in buf.chunks(win) {
+                let peak = w.iter().fold(0.0f32, |p, &x| p.max(x.abs()));
+                assert!(
+                    peak <= 1.0 + 1e-3,
+                    "field {field} master {level}: peak {peak} exceeded unity"
+                );
+                assert!(
+                    peak >= floor * 0.99 - 1e-3 || peak > 0.0,
+                    "field {field} master {level}: peak {peak} fell below the floor {floor}"
+                );
+            }
+        }
+    }
+}
+
+/// A shut field is the instrument that shipped: every preset predating it
+/// loads with `field: 0.0`, and at zero the gain is exactly master, so none of
+/// the 42 in the bank moved.
+#[test]
+fn a_shut_field_is_exactly_master() {
+    let mut patch = Patch::init(ALGORITHMS[4], RatioMode::Golden);
+    patch.index = 0.0;
+    patch.master_level = 1.0;
+    assert_eq!(patch.field, 0.0, "a new patch must start with the field shut");
+
+    let mut plain = Voice::new(SR, patch);
+    plain.set_freq_hz(110.0);
+    let mut a = vec![0.0f32; 24_000];
+    plain.render(&mut a);
+
+    // A note is the only thing the field reacts to, so with it shut a voice
+    // that is played must match one that is not, sample for sample.
+    let mut played = Voice::new(SR, patch);
+    played.set_freq_hz(110.0);
+    played.glide_to_hz(110.0);
+    let mut b = vec![0.0f32; 24_000];
+    played.render(&mut b);
+
+    assert_eq!(a, b, "a shut field still answered a note");
 }

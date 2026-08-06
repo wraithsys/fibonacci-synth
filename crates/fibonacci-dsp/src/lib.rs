@@ -22,6 +22,7 @@
 //! patch-change time only.
 
 pub mod algorithm;
+pub mod breath;
 pub mod melody;
 pub mod patch;
 mod phase;
@@ -29,6 +30,7 @@ pub mod reverb;
 pub mod voice;
 
 pub use algorithm::{compile, AlgorithmId, Combine, Compiled, ALGORITHMS, NUM_NODES, NUM_OPS};
+pub use breath::Breath;
 pub use melody::{
     HoldSource, Melody, MelodyParams, Quantization, Scale, Tuning, NUM_SCALES, NUM_TUNINGS,
 };

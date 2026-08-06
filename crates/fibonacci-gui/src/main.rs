@@ -398,6 +398,10 @@ enum Event {
     SetVerb(VerbParams),
     SetMelody(MelodyParams),
     GlideTo(f32),
+    /// A note ended — a MIDI key lifted, a sequencer step giving way to the
+    /// next, or the sample-and-hold being switched off. All three are the
+    /// same gesture and reach the same place.
+    NoteOff,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -414,8 +418,17 @@ fn apply(voice: &mut Voice, verb: &mut StereoVerb, melody: &mut Melody, ev: Even
             verb.configure(voice.patch(), voice.compiled());
         }
         Event::SetVerb(p) => verb.set_params(p),
-        Event::SetMelody(p) => melody.set_params(p),
+        Event::SetMelody(p) => {
+            // Releasing the sample-and-hold ends the note it was holding — the
+            // one moment a sequencer release is audible, since every other
+            // step is immediately replaced by the next attack.
+            if melody.params().enabled && !p.enabled {
+                voice.note_off();
+            }
+            melody.set_params(p);
+        }
         Event::GlideTo(hz) => voice.glide_to_hz(hz),
+        Event::NoteOff => voice.note_off(),
     }
 }
 
@@ -474,8 +487,19 @@ fn connect_midi(mut tx: rtrb::Producer<Event>) -> Option<midir::MidiInputConnect
             port,
             "bypo-in",
             move |_, msg, _| {
-                if msg.len() >= 3 && msg[0] & 0xF0 == 0x90 && msg[2] > 0 {
+                if msg.len() < 3 {
+                    return;
+                }
+                if msg.len() < 3 {
+                    return;
+                }
+                // Note-off is 0x80, and also 0x90 with velocity 0 — the
+                // running-status convention most controllers actually send.
+                let status = msg[0] & 0xF0;
+                if status == 0x90 && msg[2] > 0 {
                     let _ = tx.push(Event::GlideTo(midi_to_hz(msg[1])));
+                } else if status == 0x80 || (status == 0x90 && msg[2] == 0) {
+                    let _ = tx.push(Event::NoteOff);
                 }
             },
             (),
@@ -536,6 +560,9 @@ fn start_audio(patch: Patch, verb_params: VerbParams) -> Result<AudioRig> {
             while done < frames {
                 if let Some(0) = melody.samples_until_fire() {
                     let hz = melody.fire();
+                    // A step ends the previous note and begins the next: both
+                    // gestures, derived from the pitch changing.
+                    voice.note_off();
                     voice.glide_to_hz(hz);
                 }
                 let run = melody
@@ -4255,6 +4282,51 @@ impl eframe::App for App {
             if resp.changed() {
                 let _ = self.rig.ctrl_tx.push(Event::GlideTo(self.drone_hz));
             }
+            // The field and its curve. Master is the field's *floor*, so these
+            // sit directly beneath it: what you are setting is how far above
+            // that floor the instrument moves, and how a note's gesture
+            // returns to the baseline.
+            let r = ui.add(egui::Slider::new(&mut self.shadow.field, 0.0..=1.0).text("field"));
+            patch_changed |= r.changed();
+            if r.drag_stopped() {
+                log_line = Some(format!(
+                    "field {:.2}. movement fills the headroom above master, \
+                     {} shape, {:.3} hz.",
+                    self.shadow.field,
+                    mode_name(self.shadow.ratio_mode),
+                    fibonacci_dsp::Breath::rate_hz(self.drone_hz),
+                ));
+            }
+            let r = ui.add(
+                egui::Slider::new(&mut self.shadow.curve, 0.0..=1.0)
+                    .text("curve")
+                    .custom_formatter(|p, _| {
+                        // Named rather than numbered: the number means nothing
+                        // without knowing it is an exponent over φ^±2.
+                        let name = if p < 0.33 {
+                            "log"
+                        } else if p > 0.67 {
+                            "exp"
+                        } else {
+                            "lin"
+                        };
+                        format!("{name} {p:.2}")
+                    }),
+            );
+            patch_changed |= r.changed();
+            if r.drag_stopped() {
+                log_line = Some(format!(
+                    "curve {:.2}. a note's boost returns {}.",
+                    self.shadow.curve,
+                    if self.shadow.curve < 0.33 {
+                        "fast, then lingering"
+                    } else if self.shadow.curve > 0.67 {
+                        "held, then falling away"
+                    } else {
+                        "evenly"
+                    }
+                ));
+            }
             if patch_changed {
                 self.send_patch();
             }
@@ -4286,6 +4358,17 @@ impl eframe::App for App {
                         format!(
                             "glide   one-pole, {:.3} s → {:.1} hz",
                             self.shadow.glide_seconds, self.drone_hz
+                        ),
+                        format!(
+                            "field   hz/φ¹³ = {:.3} hz, {} sig, floor {:.3}",
+                            fibonacci_dsp::Breath::rate_hz(self.drone_hz),
+                            mode_name(self.shadow.ratio_mode),
+                            master_gain(self.shadow.master_level),
+                        ),
+                        format!(
+                            "curve   φ^({:+.1}) on a {:.3} s return",
+                            4.0 * (self.shadow.curve - 0.5),
+                            0.987
                         ),
                     ] {
                         ui.label(

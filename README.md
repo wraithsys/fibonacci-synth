@@ -473,6 +473,55 @@ xorshift32 for noise-flavored (still reproducible) picks.
 | **rho powers** | `root · ρᵏ` — steps of log₂(ρ)·1200 ≈ 486 cents, a not-quite-half-octave belonging to no temperament. |
 | **phi walk** | Each fire multiplies the current pitch by φ or 1/φ, geometrically reflected off the range bounds (a mirror in log-frequency). No grid exists; every interval is golden. Ranges under ≈833 cents pin the walk to its bounds. |
 
+### The field (2026-08-06)
+
+Amplitude and pitch movement that is always on, shaped by the ratio mode, with
+no LFO you can set the rate of. Three rules generate all of it.
+
+**`master` is the floor.** The instrument sits at master and the field adds
+*above* it, up to unity — `gain = master + (1 − master)·depth·swing`. So Law
+4's invariant is structural rather than something anything has to be careful
+about: nothing but the master knob can take the output to zero. It also means
+the field lives in the headroom, so turning master down gives it more room to
+breathe, and at master 1.0 there is nowhere to go and it goes quiet.
+
+**The rate comes from the frequency, clamped.** `f = freq / φ¹³`. φ¹³ ≈ 521,
+and 13 is a Fibonacci number — the same 13 as the parameter glide. A low drone
+breathes slowly (27.5 Hz → a ~19 s period), a high one quickly (440 Hz → ~1.2
+s). The clamp matters: `drone hz` stops at 440 but the *sequencer* does not,
+and plastic powers with root and range maxed reaches for several kHz, which
+would climb toward audio-rate AM. Rather than reason about which tunings can
+do that, the rate is clamped to what the drone knob itself can ask for.
+
+**The shape comes from the ratio mode.** Each mode already owns a five-integer
+sequence — the same one the Logalith counts chambers with. Normalised, those
+integers become the rates of five summed components, so each mode moves in a
+way only it can and nothing new had to be invented to say how.
+
+One property falls out free and is audible: **harmonic mode's movement
+repeats.** 30, 24, 18, 12, 6 are commensurate, so their sum has a period. Every
+other mode is built on an irrational limit — φ, ρ — so no two components share
+a period and the sum never lands twice. The mode you would expect to be
+periodic is the only periodic one, and nobody chose that.
+
+| control | what it is |
+|---|---|
+| **field** | depth. 0 is the instrument as it shipped, exactly. |
+| **curve** | how a note's gesture returns: `φ^(±2)` as an exponent. Log drops fast then lingers; exp holds then falls away. |
+
+**Notes are gestures on the modulation, never on the audio.** A note beginning
+restarts the movement and multiplies its depth by φ²; a note ending is the same
+gesture at `1/φ`, without the restart. Both fall back to the baseline along
+`curve` over a Fibonacci 987 ms. Nothing anywhere touches the audio's
+amplitude, which is why none of this is an ADSR under another name — the sound
+has no attack and no release, it simply moves more for a while.
+
+Both note sources reach it identically: a MIDI key, and the sequencer changing
+pitch. A sequencer step ends the previous note and begins the next, so its
+release is immediately replaced by the next attack — the one moment you hear a
+sequenced release is when the sample-and-hold is switched off, which ends the
+note it was holding.
+
 **The PITCH readout** (melody panel, under the tuning row) answers one
 question: *is pitch being quantised right now?* — independent of whether the
 result is in tune by any conventional reckoning. `Tuning::quantization()` is
