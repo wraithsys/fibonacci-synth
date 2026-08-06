@@ -63,16 +63,34 @@ const RATE_MAX_HZ: f32 = 440.0 / 521.002;
 /// before you can name, not a warble.
 const FM_MAX_CENTS: f32 = 21.0;
 
-/// How much a trigger multiplies the field's depth at the instant it lands.
-/// φ² — "significantly", as asked, and the same constant the rest of the
-/// instrument reaches for when it wants a step rather than a nudge.
-const TRIGGER_BOOST: f32 = PHI * PHI;
+/// Where the depth rests between notes, as a fraction of `field` — `1/φ²`.
+///
+/// The boost interpolates from here up to `field` itself, so a note is φ²
+/// deeper than the rest state and **nothing ever saturates**. The first cut
+/// multiplied `field` by `1 + φ²·boost` and clamped at 1.0, which meant the
+/// control did nothing at all above 0.276 while notes were arriving — Billy
+/// found it immediately: "seems to cap out at 0.3".
+const REST_FRACTION: f32 = 1.0 / (PHI * PHI);
 
-/// How long the boost takes to fall back to the baseline. Fibonacci 987 ms —
-/// long enough that a note's movement is still settling when the next one
-/// arrives at any sequencer rate above about 1 Hz, which is where the push and
-/// pull comes from.
-const BOOST_DECAY_S: f32 = 0.987;
+/// How much of the gap between notes the gesture occupies: `1/φ`, leaving
+/// `1/φ²` of it at rest.
+///
+/// **Derived, not dialled.** A fixed decay cannot work across the sequencer's
+/// whole range: at 8 Hz the notes are 125 ms apart, and a boost falling over
+/// ~1 s is re-triggered long before it has moved, so it sits pinned at maximum
+/// and there are no dynamics at all — which is exactly what Billy heard. The
+/// instrument measures the interval it is being played at and fits the gesture
+/// inside it, so the push and pull is there at 8 Hz and at 0.1 Hz alike.
+const GESTURE_FRACTION: f32 = 1.0 / PHI;
+
+/// Fallback gesture length when nothing has established an interval yet — one
+/// key, played once. Fibonacci 987 ms.
+const LONE_NOTE_S: f32 = 0.987;
+
+/// Bounds on the measured interval, so a first note or a pathological rhythm
+/// cannot produce an absurd gesture.
+const MIN_INTERVAL_S: f32 = 0.05;
+const MAX_INTERVAL_S: f32 = 8.0;
 
 /// How big a note *ending* is against a note beginning: `1/φ`. A release is
 /// the same gesture, smaller — not a different mechanism.
@@ -116,6 +134,9 @@ pub struct Breath {
     /// What the decay is falling *from*: 1.0 for a note beginning, less for a
     /// note ending. Both fall along the same curve.
     boost_level: f32,
+    /// The interval between the last two note beginnings, in seconds — how
+    /// fast the instrument is being played. The gesture is sized from this.
+    interval: f32,
 }
 
 /// What the field is doing this sample.
@@ -136,12 +157,31 @@ impl Breath {
             phase: Self::start_phase(),
             mode,
             since_trigger: None,
+            interval: LONE_NOTE_S,
             boost_level: 1.0,
         }
     }
 
+    /// Opening state: golden fractions of a turn, so the components do not all
+    /// begin at the top together and the instrument does not open on a thump.
     fn start_phase() -> [f32; 5] {
         core::array::from_fn(|i| (i as f32 / PHI).fract())
+    }
+
+    /// Where a note puts the movement: **all five components aligned at their
+    /// peak**, so the swing is at its maximum the instant the note lands and
+    /// the boost has the whole range to work across.
+    ///
+    /// The opening state deliberately avoids this — aligned components are a
+    /// thump — but a thump is precisely what a note *is*. And because the five
+    /// rates differ, they scatter again within the note, so every note strikes
+    /// identically and decays into the mode's own shape.
+    ///
+    /// This is what the dynamics live on. Landing mid-swing left the boost
+    /// only half the range to move through, which is why a note was audible
+    /// but not *felt*.
+    fn note_phase() -> [f32; 5] {
+        [0.25; 5]
     }
 
     pub fn set_mode(&mut self, mode: RatioMode) {
@@ -163,9 +203,22 @@ impl Breath {
     /// wearing a different word — the sound has no attack and no release, it
     /// simply moves more for a while.
     pub fn trigger(&mut self) {
-        self.phase = Self::start_phase();
+        // Learn the tempo from the playing. Only a *beginning* counts: a
+        // release is part of the note it ends, not a new one.
+        if let Some(elapsed) = self.since_trigger {
+            if elapsed >= MIN_INTERVAL_S && self.boost_level >= 1.0 {
+                self.interval = elapsed.min(MAX_INTERVAL_S);
+            }
+        }
+        self.phase = Self::note_phase();
         self.since_trigger = Some(0.0);
         self.boost_level = 1.0;
+    }
+
+    /// How long the current gesture lasts: the golden section of the interval
+    /// being played at, so it always fits inside the gap.
+    fn gesture_s(&self) -> f32 {
+        (self.interval * GESTURE_FRACTION).clamp(MIN_INTERVAL_S * GESTURE_FRACTION, LONE_NOTE_S)
     }
 
     /// A note ended — a MIDI key lifted. A smaller gesture of the same kind,
@@ -207,7 +260,7 @@ impl Breath {
         let Some(t) = self.since_trigger else {
             return 0.0;
         };
-        let remaining = 1.0 - (t / BOOST_DECAY_S).clamp(0.0, 1.0);
+        let remaining = 1.0 - (t / self.gesture_s()).clamp(0.0, 1.0);
         let exponent = PHI.powf(CURVE_RANGE * (curve.clamp(0.0, 1.0) - 0.5));
         self.boost_level * remaining.powf(exponent)
     }
@@ -235,7 +288,11 @@ impl Breath {
         // The trigger's envelope is on the *depth*, never on the audio. It
         // rides on top of the field, so at field 0 a note does nothing at all —
         // the field is the whole mechanism and this is a gesture within it.
-        let depth = (field * (1.0 + TRIGGER_BOOST * self.boost(curve))).min(1.0);
+        // Rests at `field/φ²` and rises to `field` on a note — φ² of movement
+        // between rest and gesture, and no clamp anywhere, so every position of
+        // the control does something.
+        let boost = self.boost(curve);
+        let depth = field * (REST_FRACTION + (1.0 - REST_FRACTION) * boost);
         if let Some(t) = self.since_trigger.as_mut() {
             *t += 1.0 / self.sample_rate;
         }
@@ -408,6 +465,70 @@ mod tests {
             let (x, y) = (a.tick(hz, 0.5, 0.5, 0.5), b.tick(hz, 0.5, 0.5, 0.5));
             assert_eq!(x.gain, y.gain);
             assert_eq!(x.pitch, y.pitch);
+        }
+    }
+}
+
+#[cfg(test)]
+mod gesture_tests {
+    use super::*;
+
+    const SR: f32 = 48_000.0;
+
+    /// Peak-to-trough of the gain across one note, after the tempo has been
+    /// learned. This is Billy's actual test: "can i hear amp dynamics with the
+    /// sequencer set to its fastest setting of like 8hz".
+    fn swing_at(rate_hz: f32, field: f32) -> f32 {
+        let mut b = Breath::new(SR, RatioMode::Golden);
+        let step = (SR / rate_hz) as usize;
+        // Four notes to establish the interval, then measure the fifth.
+        for _ in 0..4 {
+            b.trigger();
+            for _ in 0..step {
+                b.tick(110.0, field, 0.0, 0.5);
+            }
+        }
+        b.trigger();
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for _ in 0..step {
+            let g = b.tick(110.0, field, 0.0, 0.5).gain;
+            lo = lo.min(g);
+            hi = hi.max(g);
+        }
+        hi - lo
+    }
+
+    /// **The gesture fits inside the gap at every playable rate.** A fixed
+    /// decay pinned the boost at maximum whenever notes arrived faster than it
+    /// could fall, which killed the dynamics exactly where they were wanted.
+    #[test]
+    fn there_are_dynamics_at_the_sequencers_fastest_rate() {
+        // 8 Hz is the melody engine's ceiling.
+        let fast = swing_at(8.0, 1.0);
+        assert!(
+            fast > 0.05,
+            "at 8 hz the gain moved only {fast} within a note — no audible dynamics"
+        );
+        // And it still works slowly, where a fixed decay was fine.
+        let slow = swing_at(0.5, 1.0);
+        assert!(slow > 0.05, "at 0.5 hz the gain moved only {slow}");
+    }
+
+    /// **Every position of the control does something.** The first cut
+    /// multiplied and clamped, so `field` was inert above 0.276 whenever notes
+    /// were arriving — Billy: "seems to cap out at 0.3".
+    #[test]
+    fn the_field_control_keeps_working_past_a_third() {
+        let mut last = 0.0;
+        for step in 1..=10 {
+            let field = step as f32 / 10.0;
+            let swing = swing_at(8.0, field);
+            assert!(
+                swing > last,
+                "field {field} moved {swing}, no more than {last} at the step below — \
+                 the control has saturated"
+            );
+            last = swing;
         }
     }
 }
