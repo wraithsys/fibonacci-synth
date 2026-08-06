@@ -3807,6 +3807,48 @@ impl eframe::App for App {
                     }
                 }
             });
+            // Is pitch being quantised right now? (Billy, 2026-08-06: "make
+            // it clear somewhere in the app when pitch is being quantized vs
+            // when it isn't ... doesn't matter if it's been tuned or not".)
+            //
+            // It sits under the tuning row because that is the control that
+            // decides it, and it reads with the S&H switch off as well as on:
+            // with the melody released, pitch is whatever the drone knob is
+            // holding, and a knob is continuous. The state is derived from
+            // the tuning every frame rather than stored, so it cannot drift
+            // out of agreement with the engine.
+            //
+            // Word for 12-TET, symbol for the rest — the alternatives are
+            // grids too, just nobody's temperament, and "QUANTISED" alone
+            // would flatten a real distinction.
+            {
+                let q = m.tuning.quantization();
+                // The S&H being off is its own answer: pitch is then whatever
+                // the drone knob holds, and a knob is continuous. The tuning's
+                // symbol is withheld in that state rather than shown greyed,
+                // because a symbol for a grid nothing is currently landing on
+                // would be a lie in 1-bit, where there is no grey to say
+                // "inactive" with.
+                let snapping = m.enabled && q.is_quantized();
+                let word = if snapping { "QUANTISED" } else { "FREE" };
+                let symbol = if m.enabled { q.symbol() } else { "" };
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("PITCH").color(WHITE));
+                    egui::Frame::none()
+                        .fill(if snapping { WHITE } else { BLACK })
+                        .stroke(Stroke::new(1.0_f32, WHITE))
+                        .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(word)
+                                    .color(if snapping { BLACK } else { WHITE }),
+                            );
+                        });
+                    if !symbol.is_empty() {
+                        ui.label(egui::RichText::new(symbol).color(WHITE));
+                    }
+                });
+            }
             if toggle_picker {
                 self.scale_picker_open = !self.scale_picker_open;
             }

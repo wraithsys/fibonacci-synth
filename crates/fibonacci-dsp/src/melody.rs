@@ -137,6 +137,58 @@ impl Tuning {
             Tuning::GoldenWalk => "phi walk",
         }
     }
+
+    /// Whether this tuning snaps pitch to a grid, and which grid.
+    ///
+    /// The question the interface has to answer is Billy's (2026-08-06): *is
+    /// quantisation happening right now, or isn't it* — regardless of whether
+    /// what comes out is in tune by any conventional reckoning. Four of these
+    /// five snap; the fifth genuinely does not, and that difference is
+    /// audible, so the face should not have to be guessed at.
+    pub fn quantization(self) -> Quantization {
+        match self {
+            Tuning::Scale => Quantization::TwelveTet,
+            // The Fibonacci integers as absolute Hz: a ten-rung ladder that
+            // is a grid by any measure, just not anybody's temperament.
+            Tuning::FibonacciHz => Quantization::Grid("F"),
+            Tuning::GoldenPowers => Quantization::Grid("φ"),
+            Tuning::PlasticPowers => Quantization::Grid("ρ"),
+            // The walk has memory: the next pitch is the *current* one times
+            // φ or 1/φ, reflected off the bounds. There is no set of rungs to
+            // land on, which is exactly what makes it the odd one out.
+            Tuning::GoldenWalk => Quantization::Free("φ"),
+        }
+    }
+}
+
+/// What a tuning does to pitch, for the benefit of anyone looking at the
+/// instrument and wondering whether it is snapping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Quantization {
+    /// Snapped to 12-tone equal temperament, through the scale bank. The
+    /// only tuning here a piano would recognise.
+    TwelveTet,
+    /// Snapped to a grid that is not 12-TET, labelled by the symbol of the
+    /// constant that builds it.
+    Grid(&'static str),
+    /// Not snapped to anything. The symbol is the interval it moves *by*,
+    /// which is a different claim entirely from the interval it lands *on*.
+    Free(&'static str),
+}
+
+impl Quantization {
+    /// Is pitch being quantised at all? The binary Billy asked for.
+    pub fn is_quantized(self) -> bool {
+        !matches!(self, Quantization::Free(_))
+    }
+
+    /// The constant's symbol, or `""` when the word alone says it.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Quantization::TwelveTet => "",
+            Quantization::Grid(s) | Quantization::Free(s) => s,
+        }
+    }
 }
 
 /// Where the sample-and-hold draws its values. Both are deterministic.
@@ -453,6 +505,71 @@ mod tests {
         }
         for (d, &c) in counts.iter().enumerate() {
             assert!(c >= 50, "degree {d} visited only {c}/700 times");
+        }
+    }
+
+    /// A tuning that claims a grid must *land on one*, and the one that
+    /// claims not to must not.
+    ///
+    /// Tests the mechanic rather than the label: a grid has one rung per
+    /// degree, so firing far more often than there are degrees can never
+    /// produce more distinct pitches than there are rungs. The golden walk
+    /// has memory — the next pitch multiplies the current one — so it escapes
+    /// that bound and lands wherever its reflections put it. If someone
+    /// rewires a tuning and forgets its `quantization()`, this fails.
+    #[test]
+    fn a_tuning_that_claims_a_grid_lands_on_one() {
+        const RANGE: u8 = 8;
+        for tuning in Tuning::ALL {
+            let params = MelodyParams {
+                enabled: true,
+                tuning,
+                range_degrees: RANGE,
+                ..Default::default()
+            };
+            let mut m = Melody::new(SR, params);
+            let mut seen: Vec<f32> = Vec::new();
+            for _ in 0..600 {
+                let hz = m.fire();
+                if !seen.iter().any(|s| (s - hz).abs() < 1e-3) {
+                    seen.push(hz);
+                }
+            }
+            if tuning.quantization().is_quantized() {
+                assert!(
+                    seen.len() <= RANGE as usize,
+                    "{tuning:?} claims a grid but produced {} distinct pitches for {RANGE} degrees",
+                    seen.len()
+                );
+            } else {
+                assert!(
+                    seen.len() > RANGE as usize,
+                    "{tuning:?} claims no grid yet produced only {} distinct pitches — \
+                     it is snapping to something",
+                    seen.len()
+                );
+            }
+        }
+    }
+
+    /// Exactly one tuning is 12-TET, which is the module's own opening claim:
+    /// "one quantized, four that treat 12-TET as optional". Every other
+    /// tuning carries a symbol, because the word alone would not distinguish
+    /// them in the interface.
+    #[test]
+    fn one_tuning_is_twelve_tet_and_the_rest_are_symbols() {
+        let tet: Vec<Tuning> = Tuning::ALL
+            .into_iter()
+            .filter(|t| t.quantization() == Quantization::TwelveTet)
+            .collect();
+        assert_eq!(tet, vec![Tuning::Scale]);
+        for tuning in Tuning::ALL {
+            let q = tuning.quantization();
+            if q == Quantization::TwelveTet {
+                assert_eq!(q.symbol(), "");
+            } else {
+                assert!(!q.symbol().is_empty(), "{tuning:?} has no symbol to show");
+            }
         }
     }
 

@@ -469,6 +469,40 @@ xorshift32 for noise-flavored (still reproducible) picks.
 | **rho powers** | `root · ρᵏ` — steps of log₂(ρ)·1200 ≈ 486 cents, a not-quite-half-octave belonging to no temperament. |
 | **phi walk** | Each fire multiplies the current pitch by φ or 1/φ, geometrically reflected off the range bounds (a mirror in log-frequency). No grid exists; every interval is golden. Ranges under ≈833 cents pin the walk to its bounds. |
 
+**The PITCH readout** (melody panel, under the tuning row) answers one
+question: *is pitch being quantised right now?* — independent of whether the
+result is in tune by any conventional reckoning. `Tuning::quantization()` is
+the model, and it lives in the DSP beside the tunings because whether a
+tuning snaps is a property of the tuning.
+
+| State | When | Shown |
+|---|---|---|
+| 12-TET | **scale** | `QUANTISED`, inverted |
+| grid | **fib hz**, **phi powers**, **rho powers** | `QUANTISED` inverted, plus `F`, `φ` or `ρ` |
+| free | **phi walk** | `FREE`, plus `φ` |
+| free | S&H released | `FREE`, no symbol |
+
+Four of the five snap. The three non-12-TET ones are grids by any measure —
+a fixed ladder of rungs, just nobody's temperament — so they read
+`QUANTISED` and carry the symbol of the constant that builds the ladder;
+collapsing them into one undifferentiated word would lose a real
+distinction. **phi walk** is the exception and reads `FREE`: it has memory,
+multiplying the *current* pitch rather than mapping a degree, so there is no
+set of rungs to land on. It still carries `φ`, because the interval a tuning
+moves *by* is a different claim from the interval it lands *on*.
+
+With the sample-and-hold released, pitch is whatever the drone knob holds —
+continuous — so the state is `FREE` and the symbol disappears entirely
+rather than greying out: this is a 1-bit interface with no grey to mean
+"inactive", and a symbol for a grid nothing is landing on would be false.
+The inversion carries the binary so it reads across the room; the symbol
+only has to be legible closer up.
+
+The claim is tested against what the tunings *emit*, not what they declare:
+600 fires per tuning, and anything advertising a grid must produce no more
+distinct pitches than there are degrees, while **phi walk** must exceed that
+bound.
+
 **Scales — 8, Fibonacci again**: phrygian, phrygian dominant, natural
 minor, harmonic minor, neapolitan minor, byzantine (double harmonic), plus
 two derived:
