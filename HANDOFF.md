@@ -408,12 +408,37 @@ ear/eye-verdicted by Billy).** His notes live at
 
 ## Open queue
 
-**The live queue is the v1.0.2 section above** — the logo is the only item
-left in scope, and Billy wants further changes in before it ships.
+**⚑ THE TIDY-UP, requested 2026-08-06 and not yet done.** Billy, before
+publishing to itch: *"i want a major tidy up of stuff — clear out everything
+that isn't needed ... the way the app currently is, is how it should be.
+Anything that isn't in it that is TBC or a maybe is no longer."* He then ran
+out of bandwidth to supervise it, so it is queued rather than abandoned.
 
-**Billy's items**: roster-to-8. The starter bank is **done** (42 presets in
-`presets/BYPO/`) and the 1-bit icon **exists** — the open logo question is
-about replacing it, not creating one. **Portraits are deferred indefinitely past
+The specification is that sentence: **the shipped behaviour is the spec**, and
+anything existing only to serve a parked, deferred or maybe-someday feature
+goes. Known candidates, none verified yet:
+
+- `assets/voice.txt` and `assets/integrity_*.txt` — HANDOFF calls the pool
+  mechanism retired, replaced by `relic_log.json`. Still on disk.
+- `assets/portraits/` — 24 grids, a README and IMAGE_BRIEF for a feature
+  deferred indefinitely that nothing in the app draws. Plus whatever code
+  still parses them.
+- `tools/logo_compose.py` — superseded by `examples/make_icon.rs`, and needs a
+  Python this machine does not have.
+- `icon/logalith_1024.png` — source for the icon that was replaced.
+- The 17 loose `.jpg` and `earth.png` in `assets/`, untracked, which the asset
+  convention says should have been deleted once tested.
+- The parked-feature prose in DESIGN.md and this file — but **the recursive
+  Room spec is a real design record**, not clutter, and destroying it is a
+  decision Billy should make rather than a tidy-up.
+
+Do this as an audit that *reports* first, with evidence that each thing is
+genuinely unreferenced, and let Billy rule on the judgement calls. Deleting
+something load-bearing just before a public release is a much worse outcome
+than leaving a dead file in.
+
+**Billy's items**: roster-to-8. The starter bank is **done** (56 presets in
+`presets/BYPO/`) and the icon is **Billy's logo** as of 2026-08-06. **Portraits are deferred indefinitely past
 v1** (Billy, 2026-08-05: left "unless I decide I want to overcome the
 hurdles of it") — the four unassigned grids and the three unwritten
 characters wait with them, and nothing in the app currently draws them, so
