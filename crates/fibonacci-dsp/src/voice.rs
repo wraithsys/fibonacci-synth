@@ -2,7 +2,7 @@
 //!
 //! No ADSR envelopes: once a frequency is set the voice sounds until told
 //! otherwise. There is no attack, no release, and no note that ends of its
-//! own accord â amplitude may move, but it moves around a floor it never
+//! own accord — amplitude may move, but it moves around a floor it never
 //! falls through. The expressive controls are the algorithm's structure
 //! toggles, the operator power switches, and pitch glide.
 //!
@@ -11,7 +11,7 @@
 //! Enabling an operator always resets its phase (and feedback history, if it
 //! is the feedback operator) *before* it fades in, so a re-enabled operator
 //! sounds exactly like it did the first time. Disabling fades out over
-//! [`RAMP_SECONDS`], then zeroes that state â an off operator holds no ghost
+//! [`RAMP_SECONDS`], then zeroes that state — an off operator holds no ghost
 //! state whatsoever. Re-enabling *during* the fade-out still resets phase
 //! immediately (determinism wins over the small discontinuity that can cause).
 
@@ -20,30 +20,38 @@ use crate::breath::Breath;
 use crate::patch::{master_gain, Patch, PHI};
 use crate::phase::{allpass_coeff_for, PhaseRotator, DESIGN_HZ, PHASE_PER_PASS};
 
-/// One sample of the voice, with the per-operator outputs exposed â this is
+/// One sample of the voice, with the per-operator outputs exposed — this is
 /// what the reverb listens to (including the modulators a mono mix never
 /// reveals).
 #[derive(Clone, Copy, Debug)]
 pub struct Frame {
     /// Current-sample output of every operator (post level, gain, and INDEX).
     pub ops: [f32; NUM_OPS],
-    /// The dry mono mix: mean of carriers Ã master gain (position^Ï, glided).
+    /// The dry mono mix: mean of carriers × master gain (position^φ, glided).
     pub mix: f32,
-    /// This sample's glided master gain. The Room scales its *input* by it â
-    /// master governs how loudly the instrument speaks into the room, so at
-    /// master 0 the room falls silent instead of reverberating a voice nobody
+    /// The level the instrument is speaking at this sample: the floor with the
+    /// field's movement on top. The Room scales its *input* by this, so at
+    /// floor 0 the room falls silent instead of reverberating a voice nobody
     /// dry-hears (Billy's sweep, 2026-08-05: "Master volume should effect the
-    /// amplitude of the signal being sent into THE ROOM").
+    /// amplitude of the signal being sent into THE ROOM") — and as of
+    /// 2026-08-06 the room hears the *dynamics* rather than a flat send.
     pub master: f32,
+    /// The field's movement this sample, 0..1.
+    ///
+    /// The Room reads it to open its damping and pull back its mix as the
+    /// instrument pushes — the same single number the voice uses to lift
+    /// INDEX. One system with several consequences, rather than several
+    /// modulators that happen to share a clock.
+    pub field: f32,
 }
 
 const TAU: f32 = core::f32::consts::TAU;
 /// Phase-modulation index, in radians, contributed by a modulator running at
-/// level 1.0. With the default `1/Ï^(depth-1)` levels this lands in hot,
-/// DX-and-then-some index territory â deliberately.
+/// level 1.0. With the default `1/φ^(depth-1)` levels this lands in hot,
+/// DX-and-then-some index territory — deliberately.
 const MOD_SCALE: f32 = TAU;
 /// Feedback index, in radians, at feedback amount 1.0. The feedback signal is
-/// the average of the operator's previous two output samples â the standard
+/// the average of the operator's previous two output samples — the standard
 /// trick that tames feedback's tendency to flip into noise.
 const FB_SCALE: f32 = core::f32::consts::PI;
 /// De-click fade time for the operator power switches.
@@ -51,7 +59,7 @@ const RAMP_SECONDS: f32 = 0.002;
 /// One-pole time constant for control glides (master gain and index), a
 /// Fibonacci 13 ms. A parameter applied per-block is a step at every block
 /// boundary, and a step in gain or modulation depth on a sounding drone is a
-/// click â the same zipper bug the Room's ~15 ms parameter glide fixed ("mix
+/// click — the same zipper bug the Room's ~15 ms parameter glide fixed ("mix
 /// is clicky", 2026-08-03; "MASTER is clicky" and then INDEX after its taper,
 /// Billy's sweep, 2026-08-05). Per-sample state, so the determinism contract
 /// stays chunk-size invariant.
@@ -63,13 +71,17 @@ const RIP_DELAY_SECONDS: f32 = 0.029 * PHI;
 const RIP_SCALE: f32 = core::f32::consts::PI;
 /// Loop-gain ceiling for the Rip's recirculation at rip = 1.0.
 const RIP_MAX_FB: f32 = 0.9;
-/// One-pole lowpass coefficient in the Rip's recirculation: 1/ÏÂ² â the past
+/// How far the field lifts INDEX as it moves. Brightness is not a separate
+/// curve — it is another consequence of the same pressure.
+const FIELD_TO_INDEX: f32 = 0.1;
+
+/// One-pole lowpass coefficient in the Rip's recirculation: 1/φ² — the past
 /// darkens as it decays. Without this, recirculated highs stack up and the
 /// phase injection tips into papery feedback-PM noise at the center of the
 /// worble cycle (found by ear, 2026-08-03).
 const RIP_DAMP: f32 = 1.0 / (PHI * PHI);
 
-/// The Rip Line (README Â§11): the Ghost Line's mechanism transplanted into
+/// The Rip Line (README §11): the Ghost Line's mechanism transplanted into
 /// the voice itself. Fed by the carriers' mean output; its phase-rotated,
 /// damped recirculation is injected into the carriers' *phase input*, so the
 /// drone modulates itself with its own inverted past.
@@ -141,10 +153,12 @@ pub struct Voice {
     rip_line: RipLine,
     rip_sig: f32,
     /// The field: always-on amplitude and pitch movement, shaped by the ratio
-    /// mode. It does not multiply master â it *fills the headroom above* it,
+    /// mode. It does not multiply master — it *fills the headroom above* it,
     /// because master is the floor.
     breath: Breath,
-    /// The field's pitch multiplier, applied one sample later â the same
+    /// The field's movement, applied one sample later.
+    field_amount: f32,
+    /// The field's pitch multiplier, applied one sample later — the same
     /// idiom as `rip_sig`, and for the same reason: it is computed from the
     /// sample that has just been formed.
     field_pitch: f32,
@@ -174,6 +188,7 @@ impl Voice {
             rip_sig: 0.0,
             breath: Breath::new(sample_rate, patch.ratio_mode),
             field_pitch: 1.0,
+            field_amount: 0.0,
         }
     }
 
@@ -213,7 +228,7 @@ impl Voice {
     }
 
     /// Replace the whole patch. If the algorithm changed, the routing is
-    /// recompiled and every operator re-strikes from phase 0 â an algorithm
+    /// recompiled and every operator re-strikes from phase 0 — an algorithm
     /// change is a deterministic restructure, not a crossfade. Power-switch
     /// flips inside the new patch go through the same reset contract as
     /// [`Voice::set_op_enabled`].
@@ -248,7 +263,7 @@ impl Voice {
 
     /// Live parameter access. Fine for levels, detune, feedback, glide;
     /// do **not** flip `algorithm` here (use [`Voice::set_algorithm`]) or
-    /// `ops[i].enabled` (use [`Voice::set_op_enabled`]) â those two need the
+    /// `ops[i].enabled` (use [`Voice::set_op_enabled`]) — those two need the
     /// state transitions this accessor bypasses.
     pub fn patch_mut(&mut self) -> &mut Patch {
         &mut self.patch
@@ -262,7 +277,7 @@ impl Voice {
         &self.compiled
     }
 
-    /// Current phase (in cycles, `[0, 1)`) of an operator â for tests and,
+    /// Current phase (in cycles, `[0, 1)`) of an operator — for tests and,
     /// later, the UI's structure display.
     pub fn op_phase(&self, op: usize) -> f32 {
         self.phase[op]
@@ -284,7 +299,7 @@ impl Voice {
         self.rip_sig = 0.0;
     }
 
-    /// Render `count` samples, handing each [`Frame`] to `emit` â the
+    /// Render `count` samples, handing each [`Frame`] to `emit` — the
     /// full-fat path that exposes per-operator outputs for the reverb.
     /// Allocation-free.
     pub fn render_frames(&mut self, count: usize, mut emit: impl FnMut(usize, &Frame)) {
@@ -302,7 +317,7 @@ impl Voice {
         }
         // The INDEX macro: modulator levels and feedback scale through their
         // per-depth golden-exponent curves; carrier levels are untouched.
-        // The curves are evaluated per *sample* on the glided index â a
+        // The curves are evaluated per *sample* on the glided index — a
         // per-block index stepped the whole tree's levels at every block
         // boundary, which the knob taper turned audible ("clicky", Billy,
         // 2026-08-05). Exponents are per-block; only the powf base moves.
@@ -317,15 +332,15 @@ impl Voice {
                 0.0 // sentinel: carriers don't ride the INDEX curves
             };
         }
-        // Feedback always rides the concave depth-1 curve (x^(1/Ï)):
+        // Feedback always rides the concave depth-1 curve (x^(1/φ)):
         // grit arrives first on the INDEX sweep, in every algorithm.
         // Scaling it by the feedback op's own (deep, convex) curve stacked
-        // two attenuations â the op's level and its feedback â and made
+        // two attenuations — the op's level and its feedback — and made
         // feedback inaudible below max index (found by ear, 2026-08-03).
         // Index 0 still silences it exactly.
         let fb_exp = 1.0 / PHI;
         // Glide targets and the shared one-pole step: master's target is its
-        // taper position^Ï, index's is the knob value; both chase per-sample
+        // taper position^φ, index's is the knob value; both chase per-sample
         // like `freq` does.
         let index_target = self.patch.index.clamp(0.0, 1.0);
         let master_target = master_gain(self.patch.master_level);
@@ -339,20 +354,32 @@ impl Voice {
         for n in 0..count {
             self.freq = self.target_freq + (self.freq - self.target_freq) * glide;
             self.index += (index_target - self.index) * param_k;
+            // **The field reaches into timbre.** Billy measured this against
+            // his own singing voice: brightness is not a separate curve, it is
+            // another consequence of the same pressure — push harder and the
+            // tone opens, let it fall and it darkens and goes woody. So the
+            // field lifts INDEX by a tenth as it moves, from the very same
+            // number that moves the amplitude and the pitch.
+            //
+            // Uses the *previous* sample's field, like `rip_sig`, because the
+            // field is computed from the sample this loop is about to form.
+            // Clamped: INDEX's response curves are defined on 0..1 and a value
+            // outside that is not a louder tone, it is a different function.
+            let index = (self.index + self.field_amount * FIELD_TO_INDEX).clamp(0.0, 1.0);
             let mut eff_level = [0.0f32; NUM_OPS];
             for i in 0..NUM_OPS {
                 eff_level[i] = level[i]
                     * if index_exp[i] > 0.0 {
-                        self.index.powf(index_exp[i])
+                        index.powf(index_exp[i])
                     } else {
                         1.0
                     };
             }
-            let eff_feedback = self.patch.feedback * self.index.powf(fb_exp);
+            let eff_feedback = self.patch.feedback * index.powf(fb_exp);
 
             // The Rip's phase injection, soft-limited (x/(1+|x|)) so
-            // recirculation buildup bends the carriers' phase â capped at
-            // RIP_SCALE radians â instead of shattering it into noise.
+            // recirculation buildup bends the carriers' phase — capped at
+            // RIP_SCALE radians — instead of shattering it into noise.
             let rip_pm = rip_amount * (self.rip_sig / (1.0 + self.rip_sig.abs()));
 
             for &op in eval_order.iter() {
@@ -418,20 +445,23 @@ impl Voice {
             // drone continuously through a portamento instead of stepping when
             // the target changes.
             //
-            // Master is the **floor**, not a multiplier: the field fills the
-            // headroom between it and unity, so the output never falls below
-            // the knob. At field 0 the gain is exactly master, which is the
-            // instrument as it shipped, and at master 0 it is exactly silence.
+            // The master knob is the **floor**: the field reaches up from it by
+            // a ratio, so the output never falls below the knob and the knob at
+            // zero is still silence. At field 0 the gain is exactly the floor,
+            // which is the instrument as it shipped.
             let field = self
                 .breath
                 .tick(self.freq, self.patch.field, self.master, self.patch.curve);
             self.field_pitch = field.pitch;
+            self.field_amount = field.amount;
             emit(
                 n,
                 &Frame {
                     ops: self.out,
                     mix: mix * inv_carriers * field.gain,
-                    master: self.master,
+                    // The Room hears the movement, not a flat send.
+                    master: field.gain,
+                    field: field.amount,
                 },
             );
         }

@@ -74,6 +74,11 @@ const MAX_FB: f32 = 0.985;
 /// 48 kHz). Every user parameter glides: instant jumps on charged delay
 /// lines are audible clicks — the "mix is clicky" bug was zipper noise.
 const PARAM_SMOOTH: f32 = 0.0014;
+/// How far the field opens the damping as the instrument pushes.
+const FIELD_TO_DAMP: f32 = 0.5;
+/// How far the field pulls the wet back as the instrument pushes — the room
+/// steps aside on a surge and returns as it settles.
+const FIELD_TO_MIX: f32 = 0.1;
 /// Tap modulation: a static source cannot freeze a moving room. Without
 /// internal motion, a drone through a comb bank converges to fixed
 /// coloration — at long rt60 the modes narrow, lock onto the stationary
@@ -428,6 +433,22 @@ impl StereoVerb {
         self.haunt_s += PARAM_SMOOTH * (self.params.haunt - self.haunt_s);
         self.damp_s += PARAM_SMOOTH * (self.params.damp - self.damp_s);
 
+        // **The room answers the field** (Billy, 2026-08-06). As the
+        // instrument pushes, the damping opens and the wet pulls back — so the
+        // room brightens and steps aside on a surge, then closes and returns
+        // as it settles. It is the same movement that lifts INDEX and the
+        // amplitude, arriving here as one number rather than three modulators
+        // that happen to agree.
+        //
+        // Not smoothed: the field is already a continuous, per-sample signal
+        // glided at its own rate, so there is no step to chase. Not clamped at
+        // the bottom either, on Billy's instruction — a negative damp is a
+        // filter further open than the knob goes, and a negative mix is dryer
+        // than dry, and both are just the movement continuing past the control
+        // rather than a state anything has to special-case.
+        let damp = self.damp_s - frame.field * FIELD_TO_DAMP;
+        let mix = self.mix_s - frame.field * FIELD_TO_MIX;
+
         // Op sends: carriers full, modulators through the ghost bleed, and
         // everything through the master gain — the master governs how loudly
         // the instrument speaks *into* the room (already glided in the voice,
@@ -451,7 +472,7 @@ impl StereoVerb {
         // In-loop damping keeps only 1/φ² of the knob: the knob's voice is
         // the bus filter below, and a full-strength loop lowpass was quietly
         // shortening the real decay (rt60_probe, 2026-08-05).
-        let loop_damp = self.damp_s * LOOP_DAMP_SCALE;
+        let loop_damp = damp * LOOP_DAMP_SCALE;
         for i in 0..NUM_OPS {
             // …arrives in op (i + GHOST_STEP) mod 5's combs, not its own.
             let from = (i + NUM_OPS - GHOST_STEP) % NUM_OPS;
@@ -475,9 +496,9 @@ impl StereoVerb {
         // the knob; resonance wakes at the 1/φ knee and rises on a convex φ
         // curve to φ⁴. Stage two is plain (k = 2), so the slope is 24 dB/oct
         // with a single peak.
-        let fc = FC_MAX_HZ * PHI.powf(-FC_GOLDEN_STEPS * self.damp_s);
+        let fc = FC_MAX_HZ * PHI.powf(-FC_GOLDEN_STEPS * damp);
         let g = (core::f32::consts::PI * fc / self.sample_rate).tan();
-        let knee = ((self.damp_s - Q_KNEE) / (1.0 - Q_KNEE)).clamp(0.0, 1.0);
+        let knee = ((damp - Q_KNEE) / (1.0 - Q_KNEE)).clamp(0.0, 1.0);
         let q = Q_BASE + (PHI.powi(4) - Q_BASE) * knee.powf(PHI);
         let k1 = 1.0 / q;
         wet_l = self.svf_l[0].process(wet_l, g, k1);
@@ -490,8 +511,8 @@ impl StereoVerb {
         // instrument's direct voice.
         wet_l = self.wet_dc_l.process(wet_l.tanh());
         wet_r = self.wet_dc_r.process(wet_r.tanh());
-        let dry = frame.mix * (1.0 - self.mix_s);
-        (dry + wet_l * self.mix_s, dry + wet_r * self.mix_s)
+        let dry = frame.mix * (1.0 - mix);
+        (dry + wet_l * mix, dry + wet_r * mix)
     }
 }
 
@@ -508,6 +529,8 @@ mod tests {
             ops: [v; NUM_OPS],
             mix: v,
             master: 1.0,
+            // Probes measure the room itself: no field movement.
+            field: 0.0,
         }
     }
 

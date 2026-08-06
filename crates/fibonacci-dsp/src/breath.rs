@@ -8,17 +8,22 @@
 //!
 //! Three rules, and everything here follows from them:
 //!
-//! ## 1. `master` is the floor
+//! ## 1. The `floor` is a floor
 //!
-//! The instrument sits at `master` and the field adds *above* it, never below,
-//! up to unity. So Law 4's invariant stops being something this module has to
-//! be careful about and becomes true by construction: the only thing that can
-//! take the output to zero is a hand on the master knob.
+//! The instrument sits at `floor` — the knob formerly labelled master — and the
+//! field reaches *up* from it by at most φ², capped at unity. So Law 4's
+//! invariant stops being something this module has to be careful about and
+//! becomes true by construction: the output never falls below the knob.
 //!
-//! It also means the field lives in the headroom between `master` and 1.0.
-//! Turn master down and there is more room to breathe — literally. At master
-//! 1.0 there is nowhere to go and the field goes quiet, which is the honest
-//! answer to having asked for everything at once.
+//! It reaches up by a **ratio**, not an offset, and that detail is the whole
+//! difference between a volume control and a broken one. `floor + (1 −
+//! floor)·amount` also never falls below the knob — and at floor 0 it fills
+//! the entire range from silence, so turning the instrument down stops turning
+//! it down. A ratio keeps both properties at once.
+//!
+//! Turning the floor down therefore gives the movement more room, and at floor
+//! 1.0 there is nowhere left to go and the field goes quiet, which is the
+//! honest answer to having asked for everything at once.
 //!
 //! ## 2. The rate comes from the frequency, clamped
 //!
@@ -140,9 +145,18 @@ pub struct Breath {
 }
 
 /// What the field is doing this sample.
+///
+/// One number drives all of it — `amount` — and everything else here is that
+/// number wearing different units. That is the whole point: in a voice or any
+/// resonant body, loudness, pitch and timbre are consequences of one web of
+/// pressure rather than three curves nobody has to reconcile (Billy,
+/// 2026-08-06: *"envelopes just seem kind of binary rather than systemic"*).
 #[derive(Clone, Copy, Debug)]
 pub struct Field {
-    /// Gain to multiply the dry path by, in `[master, 1]`.
+    /// The movement itself, 0..1. Everything below is derived from it, and so
+    /// are the couplings the voice and the Room apply.
+    pub amount: f32,
+    /// Gain to multiply the dry path by, in `[master, min(master·φ², 1)]`.
     pub gain: f32,
     /// Frequency multiplier for the pitch movement, around 1.0.
     pub pitch: f32,
@@ -267,12 +281,20 @@ impl Breath {
 
     /// Advance one sample.
     ///
-    /// `master` is the floor and the movement fills the headroom above it, so
-    /// the returned gain is always in `[master, 1]` — there is no arrangement
-    /// of inputs that takes it below the knob.
-    pub fn tick(&mut self, freq: f32, field: f32, master: f32, curve: f32) -> Field {
+    /// `floor` is exactly that: the gain never falls below it, and the movement
+    /// reaches up from it by at most φ². Two properties have to hold together
+    /// and the second is easy to lose —
+    ///
+    /// 1. the movement never takes the output *below* the knob, and
+    /// 2. **floor at zero is still silence.**
+    ///
+    /// A plain `floor + (1 - floor)·amount` satisfies the first and quietly
+    /// breaks the second: at floor 0 the field fills the entire range and the
+    /// volume control stops being one. Reaching up by a *ratio* keeps both, and
+    /// φ² is the same contrast the gesture already uses.
+    pub fn tick(&mut self, freq: f32, field: f32, floor: f32, curve: f32) -> Field {
         let field = field.clamp(0.0, 1.0);
-        let master = master.clamp(0.0, 1.0);
+        let floor = floor.clamp(0.0, 1.0);
         let f = Self::rate_hz(freq);
         let sig = signature(self.mode);
 
@@ -297,10 +319,27 @@ impl Breath {
             *t += 1.0 / self.sample_rate;
         }
 
+        let amount = depth * swing;
+        // How far above the floor the movement may reach: φ², or whatever is
+        // left below unity if the floor is already high.
+        let reach = if floor > 0.0 {
+            (1.0 / floor).min(PHI * PHI)
+        } else {
+            PHI * PHI
+        };
         Field {
-            // Sits at master, rises into the headroom. At field 0 it is exactly
-            // master, which is the instrument as it shipped.
-            gain: master + (1.0 - master) * depth * swing,
+            amount,
+            // Reaches up from the floor by a ratio, never an offset — so the
+            // floor at zero is silence, whatever the field is doing.
+            //
+            // The *reach* is limited rather than the result. Clamping the
+            // result at unity looked equivalent and was not: past the point
+            // where `floor·φ²` exceeds 1 the top of the movement flattens, so
+            // the dynamics peaked around field 0.5 and got *smaller* toward
+            // 1.0 — the same non-monotonic fault as the old 0.3 cap, wearing a
+            // different disguise. Limiting the reach keeps every field
+            // position louder than the one below it at any floor.
+            gain: floor * (1.0 + (reach - 1.0) * amount),
             // Bipolar around unity, so the pitch movement has no DC — the drone
             // does not drift sharp just because the field is open.
             pitch: 1.0 + depth * FM_MAX_CENTS * (swing * 2.0 - 1.0) / 1200.0,
@@ -392,12 +431,12 @@ mod tests {
             let f = Breath::rate_hz(110.0);
             let period = (SR / f * 5.0) as usize;
             let first: Vec<f32> =
-                (0..64).map(|_| b.tick(110.0, 1.0, 0.0, 0.5).gain).collect();
+                (0..64).map(|_| b.tick(110.0, 1.0, 0.0, 0.5).amount).collect();
             for _ in 64..period {
                 b.tick(110.0, 1.0, 0.0, 0.5);
             }
             let second: Vec<f32> =
-                (0..64).map(|_| b.tick(110.0, 1.0, 0.0, 0.5).gain).collect();
+                (0..64).map(|_| b.tick(110.0, 1.0, 0.0, 0.5).amount).collect();
             first.iter().zip(&second).map(|(a, b)| (a - b).abs()).sum::<f32>() / 64.0
         };
         let harmonic = drift(RatioMode::Harmonic);
@@ -423,7 +462,7 @@ mod tests {
         let trace = |mode| {
             let mut b = Breath::new(SR, mode);
             (0..(SR as usize * 4))
-                .map(|_| b.tick(110.0, 1.0, 0.0, 0.5).gain)
+                .map(|_| b.tick(110.0, 1.0, 0.0, 0.5).amount)
                 .step_by(4800)
                 .collect::<Vec<f32>>()
         };
@@ -491,7 +530,7 @@ mod gesture_tests {
         b.trigger();
         let (mut lo, mut hi) = (f32::MAX, f32::MIN);
         for _ in 0..step {
-            let g = b.tick(110.0, field, 0.0, 0.5).gain;
+            let g = b.tick(110.0, field, 0.0, 0.5).amount;
             lo = lo.min(g);
             hi = hi.max(g);
         }
@@ -517,6 +556,35 @@ mod gesture_tests {
     /// **Every position of the control does something.** The first cut
     /// multiplied and clamped, so `field` was inert above 0.276 whenever notes
     /// were arriving — Billy: "seems to cap out at 0.3".
+    /// And the same, measured on the *gain* at a realistic floor — because a
+    /// monotonic `amount` can still produce a non-monotonic gain if the top of
+    /// the movement is clamped rather than scaled, which it once was.
+    #[test]
+    fn the_gain_also_keeps_growing_with_the_control() {
+        let mut last = 0.0;
+        for step in 1..=10 {
+            let field = step as f32 / 10.0;
+            let mut b = Breath::new(SR, RatioMode::Golden);
+            let stride = (SR / 8.0) as usize;
+            for _ in 0..4 {
+                b.trigger();
+                for _ in 0..stride { b.tick(110.0, field, 0.5, 0.5); }
+            }
+            b.trigger();
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for _ in 0..stride {
+                let g = b.tick(110.0, field, 0.5, 0.5).gain;
+                lo = lo.min(g); hi = hi.max(g);
+            }
+            let swing = hi - lo;
+            assert!(
+                swing > last,
+                "at floor 0.5, field {field} swung {swing}, no more than {last} below it — \n                 the gain has flattened even though the movement has not"
+            );
+            last = swing;
+        }
+    }
+
     #[test]
     fn the_field_control_keeps_working_past_a_third() {
         let mut last = 0.0;

@@ -4246,7 +4246,7 @@ impl eframe::App for App {
                 .add(egui::Slider::new(&mut self.shadow.feedback, 0.0..=1.0).text("fb"))
                 .changed();
             patch_changed |= ui
-                .add(egui::Slider::new(&mut self.shadow.master_level, 0.0..=1.0).text("master"))
+                .add(egui::Slider::new(&mut self.shadow.master_level, 0.0..=1.0).text("floor"))
                 .changed();
             // The GLIDE knob's taper (README §6): seconds = 2·position^φ⁴.
             // Past 0.1 s a glide is already outside normal portamento scope,
@@ -4352,7 +4352,7 @@ impl eframe::App for App {
                         "fb      avg(y₋₁, y₋₂) → π rad at fb 1".to_string(),
                         format!("mix     mean of {} carrier(s)", compiled.carrier_count),
                         format!(
-                            "master  x^φ → gain {:.3}, one-pole 13 ms",
+                            "floor   x^φ → gain {:.3}, one-pole 13 ms",
                             master_gain(self.shadow.master_level)
                         ),
                         format!(

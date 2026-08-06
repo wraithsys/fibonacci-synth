@@ -48,6 +48,8 @@ fn main() {
                     ops: [s * 0.15, s * 0.2, s * 0.3, s * 0.4, s * 0.8],
                     mix: s * 0.6,
                     master: 1.0,
+                    // Probes measure the room itself: no field movement.
+                    field: 0.0,
                 };
                 let (l, r) = verb.process(&frame);
                 level0 = level0 * (1.0 - 1e-4) + 1e-4 * (0.5 * (l * l + r * r)) as f64;
@@ -57,6 +59,8 @@ fn main() {
                 ops: [0.0; 5],
                 mix: 0.0,
                 master: 1.0,
+                // Probes measure the room itself: no field movement.
+                field: 0.0,
             };
             let target = level0 * 1e-6; // −60 dB in power
             let mut t60: Option<f32> = None;
