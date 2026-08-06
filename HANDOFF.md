@@ -84,12 +84,26 @@ Two traps that have each already cost a session's opening hour:
    BOMs and CRLF, or the file silently parses as nothing.
 3. **Roster counts are Fibonacci**: algorithms 5 (→8→13), ratio modes 5,
    melodic tunings 5, scales 8, comb leaves in the future Room 8.
-4. **No envelopes, ever.** It drones. Off switches are true resets
-   (fade ~2 ms then zero phase/state), tested. ⚑ **Under challenge by
-   Billy himself** — the "fluidity" ask in the v1.0.2 note wants a natural
-   envelope on MIDI note-on, "more like a compressor bloom than anything
-   sharp". It is his law to amend and he has not amended it. Do not build
-   toward it until he says so explicitly.
+4. **No traditional ADSR envelopes.** Reworded by Billy on 2026-08-06 to
+   say what he meant when he wrote it: *"AM is essential in drones — a drone
+   doesn't simply occur at a volume and then stop."* What the law forbids is
+   the **note-lifecycle model**: an attack/decay/sustain/release contour
+   where letting go of a note takes overall volume to zero. It does not
+   forbid amplitude modulation, which the instrument actively wants — and
+   note that **leaning on phase cancellation alone is not enough**: a flat
+   on-state with only beating for movement is inert, and Billy has ruled it
+   "not a worthy thing".
+
+   **The invariant, which is testable and is the real content of this
+   law**: with the instrument on and master above zero, the dry path never
+   decays to silence on its own. Modulation floors above zero — it breathes,
+   it does not die. Volume reaches zero only by the master knob or an off
+   switch, and off switches remain true resets (fade ~2 ms then zero
+   phase/state), tested.
+
+   Read a proposed design against that invariant, not against the word
+   "envelope". A release *swell* that decays back into the drone's own
+   floor is legal; one that decays to zero is not.
 5. **Determinism**: bit-identical output for identical control sequences,
    chunk-size invariant, tested.
 6. **Sound is sacred**: no compression/saturation/filtering on the dry

@@ -1,8 +1,10 @@
 //! The monophonic drone voice.
 //!
-//! No envelopes: once a frequency is set the voice sounds until told
-//! otherwise. The expressive controls are the algorithm's structure toggles,
-//! the operator power switches, and pitch glide.
+//! No ADSR envelopes: once a frequency is set the voice sounds until told
+//! otherwise. There is no attack, no release, and no note that ends of its
+//! own accord — amplitude may move, but it moves around a floor it never
+//! falls through. The expressive controls are the algorithm's structure
+//! toggles, the operator power switches, and pitch glide.
 //!
 //! Determinism contract: the same sequence of calls on a fresh [`Voice`]
 //! produces bit-identical output, regardless of how `render` is chunked.

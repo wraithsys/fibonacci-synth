@@ -12,7 +12,11 @@ immediately correct. The engine workspace keeps the working name
 
 Written in Rust as a deliberate trial of Rust over C++ for audio work.
 
-No envelopes. The instrument sounds until you tell it not to. Expression comes
+No ADSR envelopes — no attack, no release, no note that ends. Amplitude
+*moves*, because a drone that sits at one flat level is not a drone, but it
+moves around a floor it never falls through: with the instrument on and
+master up, nothing takes the volume to zero except your hand on the master
+knob. The instrument sounds until you tell it not to. Expression comes
 from restructuring the algorithm live, switching operators on and off (true
 resets, not bypasses), pitch glide, and the INDEX / rip / haunt controls.
 
