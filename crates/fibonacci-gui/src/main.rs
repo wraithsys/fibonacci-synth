@@ -975,6 +975,82 @@ fn preset_dir() -> std::path::PathBuf {
     }
 }
 
+/// What the pane calls the player's own saves — the presets at the root of
+/// `presets/`, which are theirs and are never shipped.
+const MINE_BANK: &str = "MINE";
+
+/// The bank this instrument ships its own presets in. It is a folder name and
+/// nothing more: rename the folder and the chip, the credit and the default
+/// preset's home all follow, with no code change.
+const STOCK_BANK: &str = "BYPO";
+
+/// The preset loaded when there is no previous session to restore — Billy's
+/// `init`, living in the stock bank like any other preset, so "reset to
+/// default" and "load init" are the same act.
+const DEFAULT_PRESET: &str = "init";
+
+/// Where a preset lives, and — for a shipped bank — whose it is.
+///
+/// A preset is identified by **(bank, name)**, never by name alone. Two banks
+/// may each hold a `bong` without either being wrong, and the flat key this
+/// replaced would have collapsed them onto one path: the first to load wins,
+/// the second silently overwrites on save.
+///
+/// Billy's shape (2026-08-06): a tester who likes the instrument gets asked
+/// for presets, and the next release ships them in a folder named for them.
+/// So the folder name is doing three jobs at once — it is the bank's identity
+/// on disk, its chip in the pane, and the contributor's credit. Adding a bank
+/// is dropping in a folder and negating one `.gitignore` line; nothing in this
+/// file needs to learn a contributor's name.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct PresetRef {
+    /// `None` = the player's own saves, at the root of `presets/`.
+    /// `Some(b)` = the shipped bank in `presets/<b>/`.
+    ///
+    /// `None` sorts before `Some`, which is why the player's own work heads
+    /// the list without anything having to arrange it.
+    bank: Option<String>,
+    name: String,
+}
+
+impl PresetRef {
+    /// A preset of the player's own, at the root of `presets/`.
+    fn mine(name: impl Into<String>) -> Self {
+        PresetRef { bank: None, name: name.into() }
+    }
+
+    fn in_bank(bank: impl Into<String>, name: impl Into<String>) -> Self {
+        PresetRef { bank: Some(bank.into()), name: name.into() }
+    }
+
+    fn path(&self) -> std::path::PathBuf {
+        let dir = preset_dir();
+        match &self.bank {
+            Some(bank) => dir.join(bank).join(format!("{}.json", self.name)),
+            None => dir.join(format!("{}.json", self.name)),
+        }
+    }
+
+    fn bank_label(&self) -> &str {
+        self.bank.as_deref().unwrap_or(MINE_BANK)
+    }
+
+    /// How the log names it, so a line about a deleted `bong` says which one.
+    fn qualified(&self) -> String {
+        format!("{}/{}", self.bank_label(), self.name)
+    }
+}
+
+/// Which slice of the bank the pane is showing. A view state, not an action —
+/// which is why the chips fire on a single press while everything else in the
+/// pane double-confirms: narrowing a list destroys nothing.
+#[derive(Clone, PartialEq)]
+enum PresetFilter {
+    All,
+    Mine,
+    Bank(String),
+}
+
 /// Clamp everything a loaded file could get wrong. A hand-edited or
 /// corrupted preset must never put the engine outside its documented
 /// ranges.
@@ -1011,22 +1087,60 @@ fn load_saved(path: &std::path::Path) -> Option<SavedState> {
     serde_json::from_str(&text).ok().map(sanitize)
 }
 
-fn scan_presets() -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(preset_dir())
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    name.strip_suffix(".json")
-                        .filter(|n| *n != "state")
-                        .map(String::from)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
+/// Everything on disk: the player's own saves at the root of `presets/`, then
+/// one level of bank folders beneath it.
+///
+/// **Exactly one level.** A bank is a folder of presets, not a tree, and
+/// refusing to recurse keeps "what is a bank" a question you can answer by
+/// looking at the folder. `state.json` is the session, never a preset.
+fn scan_presets() -> Vec<PresetRef> {
+    scan_presets_in(&preset_dir())
+}
+
+/// The walk itself, against a named directory so a test can point it at the
+/// repo's own bank rather than wherever a test binary happens to be running.
+fn scan_presets_in(dir: &std::path::Path) -> Vec<PresetRef> {
+    fn preset_name(entry: &std::fs::DirEntry) -> Option<String> {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".json")
+            .filter(|n| *n != "state")
+            .map(String::from)
+    }
+
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                let bank = entry.file_name().to_string_lossy().into_owned();
+                if let Ok(inner) = std::fs::read_dir(&path) {
+                    found.extend(
+                        inner
+                            .filter_map(|f| f.ok())
+                            .filter(|f| !f.path().is_dir())
+                            .filter_map(|f| preset_name(&f))
+                            .map(|name| PresetRef::in_bank(bank.clone(), name)),
+                    );
+                }
+            } else if let Some(name) = preset_name(&entry) {
+                found.push(PresetRef::mine(name));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The banks that actually hold something, in chip order.
+///
+/// An empty folder earns no chip: deleting a bank's last preset should retire
+/// the bank, not leave a chip that filters to nothing. Relies on `presets`
+/// being sorted, which [`scan_presets`] guarantees — same-bank entries are
+/// contiguous, so a plain dedup is enough.
+fn preset_banks(presets: &[PresetRef]) -> Vec<String> {
+    let mut banks: Vec<String> = presets.iter().filter_map(|p| p.bank.clone()).collect();
+    banks.dedup();
+    banks
 }
 
 /// The discouragement bands (DESIGN.md): purely presentational, with
@@ -1744,7 +1858,10 @@ struct App {
     drone_hz: f32,
     /// One text, two duties: it filters the bank live and it names a save.
     preset_name: String,
-    preset_names: Vec<String>,
+    preset_names: Vec<PresetRef>,
+    /// Which bank the pane is showing. Not persisted — a filter is where you
+    /// are looking, not what the instrument is.
+    preset_filter: PresetFilter,
     /// Dev capture (`BYPO_SHOT=seconds:path`): screenshot the window into a
     /// binary PPM at `path` once `seconds` of runtime have passed, then
     /// exit. A capture of the real renderer, not a redrawing — it is how
@@ -1755,22 +1872,30 @@ struct App {
     /// The header pane's visibility. Not persisted.
     presets_open: bool,
     /// The single highlighted preset — at most one, ever.
-    preset_selected: Option<String>,
+    preset_selected: Option<PresetRef>,
     preset_armed: PaneArm,
     restored: bool,
 }
 
 impl App {
     fn new() -> Result<Self> {
-        // Restore the last session if it exists; otherwise stock defaults.
+        // Restore the last session if it exists; otherwise Billy's `init`
+        // preset from the stock bank (2026-08-06 — the default is a preset on
+        // disk now, editable by resaving it, not a constant in here); and
+        // failing even that, the hardcoded defaults, so a bank someone has
+        // emptied still starts.
         let restored_state = load_saved(&preset_dir().join("state.json"));
         let restored = restored_state.is_some();
-        let state = restored_state.unwrap_or(SavedState {
-            patch: Patch::init(ALGORITHMS[0], RatioMode::default()),
-            verb: VerbParams::default(),
-            melody: MelodyParams::default(),
-            drone_hz: START_HZ,
-        });
+        let default_preset = PresetRef::in_bank(STOCK_BANK, DEFAULT_PRESET);
+        let from_init = restored_state.is_none() && default_preset.path().exists();
+        let state = restored_state
+            .or_else(|| load_saved(&default_preset.path()))
+            .unwrap_or(SavedState {
+                patch: Patch::init(ALGORITHMS[0], RatioMode::default()),
+                verb: VerbParams::default(),
+                melody: MelodyParams::default(),
+                drone_hz: START_HZ,
+            });
         let shadow = state.patch;
         let shadow_verb = state.verb;
         let rig = start_audio(shadow, shadow_verb)?;
@@ -1817,6 +1942,7 @@ impl App {
             drone_hz: state.drone_hz,
             preset_name: String::new(),
             preset_names: scan_presets(),
+            preset_filter: PresetFilter::All,
             shot: std::env::var("BYPO_SHOT").ok().and_then(|s| {
                 // The first colon ends the seconds, so a Windows drive path
                 // after it survives intact.
@@ -1833,6 +1959,10 @@ impl App {
             app.send_melody();
             let _ = app.rig.ctrl_tx.push(Event::GlideTo(app.drone_hz));
             app.push_log("previous session restored from state.json.".into());
+        } else if from_init {
+            app.send_melody();
+            let _ = app.rig.ctrl_tx.push(Event::GlideTo(app.drone_hz));
+            app.push_log(format!("opened on '{}'.", default_preset.qualified()));
         }
         let compiled = compile(app.shadow.algorithm);
         app.push_log(format!(
@@ -1933,7 +2063,14 @@ impl App {
     /// written. Never overwrites: a taken name gets `~X` appended (Billy's
     /// sweep, 2026-08-05) until one is free, so the only way to lose a preset
     /// is DELETE's own double confirmation.
-    fn save_preset(&mut self, name: &str) -> Option<String> {
+    /// Writes the current state as one of the player's own presets.
+    ///
+    /// Saves always land at the root of `presets/`, never inside a bank: a
+    /// bank is somebody else's work, arriving as a folder and leaving in a
+    /// release, and the instrument has no business writing into one. The
+    /// no-overwrite `~X` suffix therefore only ever has to look at the root,
+    /// so saving a `bong` while a bank holds its own `bong` is not a clash.
+    fn save_preset(&mut self, name: &str) -> Option<PresetRef> {
         let file: String = name
             .chars()
             .map(|c| {
@@ -1949,18 +2086,17 @@ impl App {
             self.push_log("preset directory could not be created.".into());
             return None;
         }
-        let mut written = file.clone();
+        let mut written = PresetRef::mine(file.clone());
         let mut x = 1;
-        while dir.join(format!("{written}.json")).exists() {
-            written = format!("{file}~{x}");
+        while written.path().exists() {
+            written = PresetRef::mine(format!("{file}~{x}"));
             x += 1;
         }
-        let path = dir.join(format!("{written}.json"));
         match serde_json::to_string_pretty(&self.current_state()) {
-            Ok(json) => match std::fs::write(&path, json) {
+            Ok(json) => match std::fs::write(written.path(), json) {
                 Ok(()) => {
                     self.preset_names = scan_presets();
-                    self.push_log(format!("preset '{written}' written."));
+                    self.push_log(format!("preset '{}' written.", written.name));
                     Some(written)
                 }
                 Err(e) => {
@@ -1977,23 +2113,26 @@ impl App {
 
     /// Removes a preset file. Only reachable through the pane's double
     /// confirmation, and only ever the highlighted preset.
-    fn delete_preset(&mut self, name: &str) {
-        let path = preset_dir().join(format!("{name}.json"));
-        match std::fs::remove_file(&path) {
+    ///
+    /// A shipped preset is deletable too — Billy's call (2026-08-06): the copy
+    /// on someone's machine is theirs. The log names the bank, because "bong
+    /// deleted" is ambiguous the moment two banks hold one.
+    fn delete_preset(&mut self, preset: &PresetRef) {
+        match std::fs::remove_file(preset.path()) {
             Ok(()) => {
                 self.preset_names = scan_presets();
-                if self.preset_selected.as_deref() == Some(name) {
+                if self.preset_selected.as_ref() == Some(preset) {
                     self.preset_selected = None;
                 }
-                self.push_log(format!("preset '{name}' deleted."));
+                self.push_log(format!("preset '{}' deleted.", preset.qualified()));
             }
             Err(e) => self.push_log(format!("preset delete failed: {e}.")),
         }
     }
 
-    fn load_preset(&mut self, name: &str) {
-        let path = preset_dir().join(format!("{name}.json"));
-        match load_saved(&path) {
+    fn load_preset(&mut self, preset: &PresetRef) {
+        let name = &preset.name;
+        match load_saved(&preset.path()) {
             Some(s) => {
                 self.shadow = s.patch;
                 self.shadow_verb = s.verb;
@@ -2809,7 +2948,13 @@ impl App {
     /// a bar, an outline and a cross are three shapes, and drawing them means they
     /// cannot fall back to a different font's idea of `—`, `□` and `✕` — which on a
     /// display face is usually a tofu box.
-    fn window_chrome(ui: &mut egui::Ui, title: &str) {
+    ///
+    /// `buttons` draws them; the presets pane passes `false` (Billy,
+    /// 2026-08-06). The dressing earns its place on PARAMETERS, which is
+    /// pretending to be a utility window inside the instrument — but the
+    /// presets pane *is* a window you opened and can close, so a
+    /// non-functional close cross on it is a lie rather than a costume.
+    fn window_chrome(ui: &mut egui::Ui, title: &str, buttons: bool) {
         egui::Frame::none()
             .fill(WHITE)
             .inner_margin(egui::Margin::symmetric(4.0, 3.0))
@@ -2821,7 +2966,7 @@ impl App {
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             // Close, maximise, minimise — right to left, as they sit.
-                            for kind in 0..3 {
+                            for kind in 0..if buttons { 3 } else { 0 } {
                                 let (resp, p) = ui.allocate_painter(
                                     Vec2::new(13.0, 11.0),
                                     Sense::hover(),
@@ -2923,6 +3068,10 @@ impl App {
     /// double confirmation) removes the highlighted preset. Nothing fires on
     /// a single press.
     fn draw_presets_pane(&mut self, ctx: &egui::Context) {
+        /// Height of both scrolling columns, so the bank list and the filter
+        /// chips share one baseline instead of one dangling below the other.
+        const LIST_H: f32 = 230.0;
+
         egui::Window::new("PRESETS")
             .title_bar(false)
             .resizable(false)
@@ -2936,7 +3085,7 @@ impl App {
                     .inner_margin(6.0),
             )
             .show(ctx, |ui| {
-                Self::window_chrome(ui, "PRESETS");
+                Self::window_chrome(ui, "PRESETS", false);
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let te = ui.add(
@@ -2962,6 +3111,13 @@ impl App {
                         } else if self.preset_armed == PaneArm::Save {
                             self.preset_armed = PaneArm::None;
                             if let Some(written) = self.save_preset(&name) {
+                                // A save you cannot see is a save you distrust:
+                                // if the pane was narrowed to somebody else's
+                                // bank, come back to where the file actually
+                                // landed.
+                                if self.preset_filter != PresetFilter::All {
+                                    self.preset_filter = PresetFilter::Mine;
+                                }
                                 self.preset_selected = Some(written);
                             }
                         } else {
@@ -2979,41 +3135,100 @@ impl App {
                                 self.push_log("no preset highlighted to delete.".into());
                                 self.preset_armed = PaneArm::None;
                             }
-                            (Some(name), PaneArm::Delete) => {
+                            (Some(preset), PaneArm::Delete) => {
                                 self.preset_armed = PaneArm::None;
-                                self.delete_preset(&name);
+                                self.delete_preset(&preset);
                             }
                             (Some(_), _) => self.preset_armed = PaneArm::Delete,
                         }
                     }
                 });
                 ui.add_space(4.0);
+
+                // Two columns, because the bank list never filled the pane's
+                // width — the preset boxes are sized to their own text, and
+                // the column of dead space to their right is exactly where
+                // Billy pointed for the filter.
+                let banks = preset_banks(&self.preset_names);
                 let query = self.preset_name.trim().to_lowercase();
-                let names: Vec<String> = self
+                let shown: Vec<PresetRef> = self
                     .preset_names
                     .iter()
-                    .filter(|n| query.is_empty() || n.to_lowercase().contains(&query))
+                    .filter(|p| match &self.preset_filter {
+                        PresetFilter::All => true,
+                        PresetFilter::Mine => p.bank.is_none(),
+                        PresetFilter::Bank(b) => p.bank.as_deref() == Some(b.as_str()),
+                    })
+                    .filter(|p| query.is_empty() || p.name.to_lowercase().contains(&query))
                     .cloned()
                     .collect();
-                if names.is_empty() {
-                    ui.label(if self.preset_names.is_empty() {
-                        "no presets saved."
-                    } else {
-                        "nothing matches."
-                    });
-                }
-                egui::ScrollArea::vertical().max_height(230.0).show(ui, |ui| {
-                    for name in names {
-                        let selected = self.preset_selected.as_deref() == Some(name.as_str());
-                        if Self::pane_button(ui, &name, selected).clicked() {
-                            if selected {
-                                self.load_preset(&name);
+
+                let chip_w = 108.0_f32;
+                let list_w = (ui.available_width() - chip_w - 8.0).max(120.0);
+                // Both columns state `top_down` explicitly. `allocate_ui`
+                // inherits the *parent's* layout, and the parent here is a
+                // horizontal one — so without this the presets and the chips
+                // both run left to right in a single strip off the edge of
+                // the pane, which is what the first cut did.
+                let column = egui::Layout::top_down(egui::Align::Min);
+                ui.horizontal_top(|ui| {
+                    ui.allocate_ui_with_layout(Vec2::new(list_w, LIST_H), column, |ui| {
+                        if shown.is_empty() {
+                            ui.label(if self.preset_names.is_empty() {
+                                "no presets saved."
                             } else {
-                                self.preset_selected = Some(name.clone());
-                                self.preset_armed = PaneArm::None;
-                            }
+                                "nothing matches."
+                            });
                         }
-                    }
+                        egui::ScrollArea::vertical()
+                            .id_salt("preset_list")
+                            .max_height(LIST_H)
+                            .show(ui, |ui| {
+                                for preset in shown {
+                                    let selected =
+                                        self.preset_selected.as_ref() == Some(&preset);
+                                    if Self::pane_button(ui, &preset.name, selected).clicked() {
+                                        if selected {
+                                            self.load_preset(&preset);
+                                        } else {
+                                            self.preset_selected = Some(preset.clone());
+                                            self.preset_armed = PaneArm::None;
+                                        }
+                                    }
+                                }
+                            });
+                    });
+                    ui.allocate_ui_with_layout(Vec2::new(chip_w, LIST_H), column, |ui| {
+                        // Scrolls both ways: a contributor's name is shown
+                        // verbatim, so the column has to reach a long one
+                        // rather than clip somebody's credit. Neither bar
+                        // appears until a name actually needs it.
+                        egui::ScrollArea::both()
+                            .id_salt("preset_banks")
+                            .max_height(LIST_H)
+                            .show(ui, |ui| {
+                                // ALL and MINE always exist; a bank chip exists
+                                // only while its folder holds something.
+                                let chip = |ui: &mut egui::Ui,
+                                                label: &str,
+                                                want: PresetFilter,
+                                                current: &mut PresetFilter| {
+                                    if Self::pane_button(ui, label, *current == want).clicked() {
+                                        *current = want;
+                                    }
+                                };
+                                chip(ui, "ALL", PresetFilter::All, &mut self.preset_filter);
+                                chip(ui, MINE_BANK, PresetFilter::Mine, &mut self.preset_filter);
+                                for bank in &banks {
+                                    chip(
+                                        ui,
+                                        bank,
+                                        PresetFilter::Bank(bank.clone()),
+                                        &mut self.preset_filter,
+                                    );
+                                }
+                            });
+                    });
                 });
             });
     }
@@ -3890,7 +4105,7 @@ impl eframe::App for App {
                     // The cell keeps its size; the chrome takes its space out of the
                     // dither filler at the bottom, which is ornament and has none to
                     // lose.
-                    Self::window_chrome(ui, "PARAMETERS");
+                    Self::window_chrome(ui, "PARAMETERS", true);
                     ui.add_space(2.0);
             ui.horizontal(|ui| {
                 let mut clicked: Option<usize> = None;
@@ -4092,6 +4307,121 @@ mod tests {
     use fibonacci_dsp::PLASTIC;
 
     const TAU: f32 = std::f32::consts::TAU;
+
+    /// The whole point of (bank, name): two banks may hold the same preset
+    /// name without either shadowing the other. Under the flat key this
+    /// replaced, both resolved to one path — first to load won, and a save
+    /// silently overwrote the other bank's file.
+    #[test]
+    fn the_same_preset_name_in_two_banks_is_two_files() {
+        let mine = PresetRef::mine("bong");
+        let ours = PresetRef::in_bank(STOCK_BANK, "bong");
+        let theirs = PresetRef::in_bank("Some Tester", "bong");
+        assert_ne!(mine.path(), ours.path());
+        assert_ne!(ours.path(), theirs.path());
+        assert_ne!(mine, ours);
+        // The player's own saves sit at the root; a bank is one folder down.
+        assert_eq!(mine.path().parent(), Some(preset_dir().as_path()));
+        assert_eq!(ours.path().parent(), Some(preset_dir().join(STOCK_BANK).as_path()));
+    }
+
+    /// The player's own work heads the list without anything having to sort
+    /// it, and each bank's presets stay contiguous — which is what lets
+    /// [`preset_banks`] find the chips with a plain dedup.
+    #[test]
+    fn presets_sort_mine_first_then_bank_by_bank() {
+        let mut v = vec![
+            PresetRef::in_bank("Zed", "one"),
+            PresetRef::mine("yams"),
+            PresetRef::in_bank("Ada", "two"),
+            PresetRef::mine("bong"),
+            PresetRef::in_bank("Ada", "one"),
+        ];
+        v.sort();
+        assert_eq!(
+            v.iter().map(|p| p.qualified()).collect::<Vec<_>>(),
+            ["MINE/bong", "MINE/yams", "Ada/one", "Ada/two", "Zed/one"]
+        );
+        assert_eq!(preset_banks(&v), ["Ada", "Zed"]);
+    }
+
+    /// An empty folder earns no chip. Deleting a bank's last preset should
+    /// retire the bank, not leave a chip that filters to nothing.
+    #[test]
+    fn a_bank_with_nothing_in_it_gets_no_chip() {
+        assert!(preset_banks(&[]).is_empty());
+        assert!(preset_banks(&[PresetRef::mine("only mine")]).is_empty());
+    }
+
+    /// The bank folder name is the credit, and it reaches the player
+    /// unaltered — no case-folding, no slug, no truncation. Someone who gave
+    /// Billy presets sees their name spelled the way they wrote it.
+    #[test]
+    fn a_banks_folder_name_is_its_label_verbatim() {
+        let p = PresetRef::in_bank("Ada Lovelace", "difference");
+        assert_eq!(p.bank_label(), "Ada Lovelace");
+        assert_eq!(p.qualified(), "Ada Lovelace/difference");
+        assert_eq!(PresetRef::mine("x").bank_label(), MINE_BANK);
+    }
+
+    /// The default preset is a file in the stock bank, not a constant in the
+    /// source — so resaving `init` changes what a fresh install opens on.
+    #[test]
+    fn the_default_preset_is_an_ordinary_preset_in_the_stock_bank() {
+        let init = PresetRef::in_bank(STOCK_BANK, DEFAULT_PRESET);
+        assert_eq!(init.bank.as_deref(), Some(STOCK_BANK));
+        assert!(init.path().ends_with("init.json"));
+        // It ships: the repo's own copy is on disk beside the rest of the bank.
+        let repo_copy =
+            std::path::Path::new("presets").join(STOCK_BANK).join("init.json");
+        assert!(
+            repo_copy.exists(),
+            "the stock bank lost its init preset — a fresh install would open on hardcoded defaults"
+        );
+    }
+
+    /// The walk, against the bank this repository actually ships — the same
+    /// discipline as the portrait test: a silently empty bank and a bank
+    /// nobody has filled in yet look identical from the source.
+    ///
+    /// Every shipped preset must also *parse*, because a bank that lists
+    /// thirty names and loads none of them is the worst version of this.
+    #[test]
+    fn the_shipped_bank_scans_parses_and_stays_out_of_the_players_way() {
+        let dir = std::path::Path::new("presets");
+        let found = scan_presets_in(dir);
+        let banks = preset_banks(&found);
+        assert!(
+            banks.contains(&STOCK_BANK.to_string()),
+            "the stock bank vanished from presets/ — found banks: {banks:?}"
+        );
+
+        let stock: Vec<&PresetRef> = found
+            .iter()
+            .filter(|p| p.bank.as_deref() == Some(STOCK_BANK))
+            .collect();
+        assert!(
+            stock.len() >= 32,
+            "the shipped bank shrank to {} presets; v1.0.1 shipped 32 plus init",
+            stock.len()
+        );
+        assert!(
+            stock.iter().any(|p| p.name == DEFAULT_PRESET),
+            "the scan cannot see the default preset"
+        );
+        for p in &stock {
+            assert!(
+                load_saved(&dir.join(STOCK_BANK).join(format!("{}.json", p.name)))
+                    .is_some(),
+                "shipped preset '{}' does not parse",
+                p.name
+            );
+        }
+
+        // The session file is not a preset, and nothing at the root of
+        // presets/ is anyone's business but the player's.
+        assert!(found.iter().all(|p| p.name != "state"));
+    }
 
     /// The chamber counts are the documented integer sequences, and each converges
     /// on its own mode's constant. This is the shell's claim about what it is; if

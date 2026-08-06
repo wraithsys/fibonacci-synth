@@ -38,15 +38,28 @@ Copy-Item "crates\fibonacci-gui\assets\RELIC_LOG.md" "$stage\assets\"
 Copy-Item "README.md" "$stage\"
 if (Test-Path "LICENSE") { Copy-Item "LICENSE" "$stage\" } else { Write-Warning "no LICENSE at repo root yet - the zip ships without one" }
 
-# The starter preset bank, when it exists: every tracked .json in the preset
-# dir except state.json (user data, never shipped).
-$bank = Get-ChildItem "crates\fibonacci-gui\presets\*.json" -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "state.json" }
-if ($bank) {
-    New-Item -ItemType Directory -Force "$stage\presets" | Out-Null
-    $bank | Copy-Item -Destination "$stage\presets\"
-    Write-Host "bank: $($bank.Count) preset(s)"
+# The shipped preset banks: the folders under presets/, each one a bank whose
+# folder name is its name in the app and its contributor's credit.
+#
+# Asked of git, not of the filesystem (2026-08-06). The old form globbed
+# `presets\*.json` and would have swept up whatever the player had saved that
+# afternoon — the root of presets/ is private user data and has no business in
+# a zip. Banks are folders and every file in one is tracked, so "what git knows
+# about" and "what ships" are now the same set by construction.
+$rel = @(& git -c core.quotePath=false ls-files "crates/fibonacci-gui/presets/*/*.json")
+if ($LASTEXITCODE -ne 0) { throw "package: could not ask git for the preset banks" }
+if ($rel) {
+    foreach ($f in $rel) {
+        # crates/fibonacci-gui/presets/<bank>/<preset>.json
+        $parts = $f -split "/"
+        $dest = Join-Path $stage (Join-Path "presets" $parts[-2])
+        New-Item -ItemType Directory -Force $dest | Out-Null
+        Copy-Item ($f -replace "/", "\") -Destination $dest
+    }
+    $banks = $rel | ForEach-Object { ($_ -split "/")[-2] } | Sort-Object -Unique
+    Write-Host "banks: $($banks -join ', ') - $($rel.Count) preset(s)"
 } else {
-    Write-Warning "no presets found - the zip ships without a starter bank"
+    Write-Warning "no preset banks found - the zip ships without a starter bank"
 }
 
 if ($Smoke) {

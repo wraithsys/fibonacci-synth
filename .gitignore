@@ -1,18 +1,21 @@
 /target
 /renders
 
-# Presets are user data — except the starter bank, which is the shipped
-# seven, negated by name below (a directory-level ignore would hide the
-# negations; the `*` form lets git see into the folder). New saves stay
-# ignored; growing the bank means adding a line here on purpose.
+# Presets are user data. The root of `presets/` is whatever the player saved
+# and never ships; a *bank* is a folder, and a bank ships whole.
+#
+# One negation per bank, not per preset (2026-08-06). The old form named all
+# 32 shipped presets individually and had already grown past the point of
+# being read — `init.json` sat un-negated for a release because nobody
+# noticed a missing line in a list that long. A folder is one line, and the
+# folder name is the bank's name everywhere: on disk, on its chip in the
+# presets pane, and as the credit when the bank is somebody else's.
+#
+# Adding a contributor's bank is therefore: drop in `presets/<their name>/`,
+# add one line here on purpose. That "on purpose" is the whole discipline —
+# nothing enters history by being in the right folder alone.
 /crates/fibonacci-gui/presets/*
-!/crates/fibonacci-gui/presets/Manhole Cover.json
-!/crates/fibonacci-gui/presets/drama.json
-!/crates/fibonacci-gui/presets/eleventeen.json
-!/crates/fibonacci-gui/presets/fiftefivemillion.json
-!/crates/fibonacci-gui/presets/one.json
-!/crates/fibonacci-gui/presets/throaty.json
-!/crates/fibonacci-gui/presets/two.json
+!/crates/fibonacci-gui/presets/BYPO/
 
 # Unconfirmed assets never enter history.
 #
@@ -33,28 +36,3 @@ dist/
 # Machine-local build acceleration (linker choice). The committed form broke
 # every machine but one; each machine keeps its own untracked copy.
 /.cargo/config.toml
-!/crates/fibonacci-gui/presets/Fluffy.json
-!/crates/fibonacci-gui/presets/Not annoying at all.json
-!/crates/fibonacci-gui/presets/Woofer.json
-!/crates/fibonacci-gui/presets/bong.json
-!/crates/fibonacci-gui/presets/boopity boo.json
-!/crates/fibonacci-gui/presets/clinker.json
-!/crates/fibonacci-gui/presets/clumsy ghost.json
-!/crates/fibonacci-gui/presets/don-t turn on car.json
-!/crates/fibonacci-gui/presets/hold tight my man.json
-!/crates/fibonacci-gui/presets/horse in the house.json
-!/crates/fibonacci-gui/presets/it had the power.json
-!/crates/fibonacci-gui/presets/jiggle physics.json
-!/crates/fibonacci-gui/presets/lil glider op.json
-!/crates/fibonacci-gui/presets/lil glider.json
-!/crates/fibonacci-gui/presets/man-s not bot.json
-!/crates/fibonacci-gui/presets/mix it up.json
-!/crates/fibonacci-gui/presets/mustang ballaie.json
-!/crates/fibonacci-gui/presets/phraze.json
-!/crates/fibonacci-gui/presets/saturated woof.json
-!/crates/fibonacci-gui/presets/slinky.json
-!/crates/fibonacci-gui/presets/wet bong.json
-!/crates/fibonacci-gui/presets/whistle tone.json
-!/crates/fibonacci-gui/presets/who got the pumpy-.json
-!/crates/fibonacci-gui/presets/who-s got a frisbee.json
-!/crates/fibonacci-gui/presets/yams.json

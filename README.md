@@ -825,6 +825,43 @@ Panels:
   confirmation, removes the highlighted preset. Nothing in the pane fires on
   a single press, and a save never overwrites — a taken name gets `~X`
   appended, so DELETE's double confirmation is the only way to lose a preset.
+  The pane wears no window buttons: the fake minimise/maximise/close belong to
+  `PARAMETERS`, which is *pretending* to be a utility window, but the presets
+  pane genuinely is one you opened and can close, and a dead cross on a real
+  window is a lie rather than a costume.
+- **Preset banks** (2026-08-06). A preset is identified by **(bank, name)**,
+  never by name alone. The root of `presets/` holds the player's own saves —
+  the `MINE` chip — and every folder beneath it is a **bank**: `presets/<bank>/`.
+  The folder name does three jobs at once. It is the bank's identity on disk,
+  its chip in the pane, and — when the bank is somebody else's — the credit.
+  Rename the folder and all three follow; nothing in the source knows a
+  contributor's name.
+
+  This exists because presets are a thing people give you. A tester who likes
+  the instrument gets asked for some, and the next release ships them under
+  their own name. Adding a bank is therefore two acts and no code: drop in the
+  folder, negate one line in `.gitignore`. That replaced a list that named all
+  32 shipped presets individually — a form which had already failed once, with
+  `init.json` sitting un-negated for a release because nobody spots a missing
+  line in a list that long. **A bank ships whole.**
+
+  The pane's right-hand column holds the filter: `ALL`, `MINE`, then one chip
+  per bank that currently holds something (an empty folder earns no chip, so
+  deleting a bank's last preset retires it). The chips are the one control in
+  the pane that fires on a single press, because narrowing a list destroys
+  nothing — the double-usage principle guards *actions*, and a filter is a
+  view, the same reasoning that makes SCALE a toggle. The text field still
+  filters by name, and the two narrow together. Saves always land in `MINE`,
+  never inside a bank: a bank is somebody else's work, arriving as a folder
+  and leaving in a release, and the instrument has no business writing into
+  one. If a save happens while the pane is narrowed elsewhere, the filter
+  returns to `MINE` — a save you cannot see is a save you distrust. Deletes,
+  by contrast, reach anything: the copy on someone's machine is theirs.
+- **The default preset** is `presets/BYPO/init.json` — an ordinary preset in
+  the stock bank, not a constant in the source, so resaving `init` changes
+  what a fresh install opens on. Startup order is: the previous session
+  (`state.json`), else `init`, else the hardcoded defaults, so a bank someone
+  has emptied still starts.
 - **The relic log** (bottom right; `crates/fibonacci-gui/assets/relic_log.json`):
   all *voiced* text is data, not code, and it is Billy's. 30 entries, **every id a
   Fibonacci number** (1 → 1,346,269 = F(31)), 18 archetypes sharing 11 avatars.
