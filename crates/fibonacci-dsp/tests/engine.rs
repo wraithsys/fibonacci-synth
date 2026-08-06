@@ -475,3 +475,124 @@ fn the_room_survives_the_field_pushing_damp_below_zero() {
         }
     }
 }
+
+/// **At full wet there must be no dry.** Billy, 2026-08-06: "with mix turned
+/// all the way up playing with damp i can still here some of the unaffected
+/// signal".
+///
+/// Isolated rather than inferred: every operator is silent, so the Room can
+/// produce no wet at all. Anything that comes out is dry leaking through, and
+/// at `mix = 1.0` there should be none whatever the field is doing.
+#[test]
+fn full_wet_admits_no_dry_however_the_field_moves() {
+    for &field in &[0.0_f32, 0.5, 1.0] {
+        let patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+        let mut verb = StereoVerb::new(SR);
+        let compiled = fibonacci_dsp::compile(patch.algorithm);
+        verb.configure(&patch, &compiled);
+        verb.set_params(VerbParams { mix: 1.0, ..VerbParams::default() });
+
+        // Silent operators, a loud dry mix: the only possible output is leak.
+        let frame = fibonacci_dsp::Frame {
+            ops: [0.0; NUM_OPS],
+            mix: 1.0,
+            master: 1.0,
+            field,
+        };
+        // Let the parameter smoothing settle on mix = 1.0.
+        for _ in 0..48_000 {
+            verb.process(&frame);
+        }
+        let mut peak = 0.0f32;
+        for _ in 0..4800 {
+            let (l, r) = verb.process(&frame);
+            peak = peak.max(l.abs()).max(r.abs());
+        }
+        assert!(
+            peak < 1e-4,
+            "field {field}: {peak} of dry signal came through at mix 1.0"
+        );
+    }
+}
+
+/// **A control at its endpoint keeps meaning what it says**, whatever the
+/// field is doing to it.
+///
+/// This has now been wrong twice in one afternoon — the floor at 0 stopped
+/// being silence, and mix at 1.0 stopped being fully wet — so it is worth
+/// stating as a property rather than fixing case by case. A coupling may push
+/// a control; it may not push it past its own edge.
+#[test]
+fn couplings_never_push_a_control_past_its_own_edge() {
+    let compiled = fibonacci_dsp::compile(ALGORITHMS[0]);
+    for &field in &[0.0_f32, 0.5, 1.0] {
+        // mix 0: no wet, ever.
+        let mut verb = StereoVerb::new(SR);
+        let patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+        verb.configure(&patch, &compiled);
+        verb.set_params(VerbParams { mix: 0.0, ..VerbParams::default() });
+        let loud = fibonacci_dsp::Frame {
+            ops: [1.0; NUM_OPS],
+            mix: 0.0, // silent dry, so anything audible is wet
+            master: 1.0,
+            field,
+        };
+        for _ in 0..48_000 {
+            verb.process(&loud);
+        }
+        let mut peak = 0.0f32;
+        for _ in 0..4800 {
+            let (l, r) = verb.process(&loud);
+            peak = peak.max(l.abs()).max(r.abs());
+        }
+        assert!(peak < 1e-4, "field {field}: {peak} of wet came through at mix 0");
+
+        // floor 0: silence, ever.
+        let mut patch = Patch::init(ALGORITHMS[0], RatioMode::Golden);
+        patch.field = field;
+        patch.master_level = 0.0;
+        let mut voice = Voice::new(SR, patch);
+        voice.set_freq_hz(110.0);
+        let mut buf = vec![0.0f32; 48_000];
+        voice.glide_to_hz(110.0);
+        voice.render(&mut buf);
+        let peak = buf.iter().fold(0.0f32, |p, &x| p.max(x.abs()));
+        assert_eq!(peak, 0.0, "field {field}: the instrument spoke at floor 0");
+    }
+}
+
+/// Determinism and chunk-size invariance survive the field — including the
+/// note gestures, whose timing is measured in samples and could easily have
+/// drifted with the block boundary.
+#[test]
+fn the_field_is_deterministic_and_chunk_invariant() {
+    for &alg in &ALGORITHMS {
+        let mut patch = Patch::init(alg, RatioMode::Plastic);
+        patch.field = 1.0;
+        patch.curve = 0.2;
+        let mut a = Voice::new(SR, patch);
+        let mut b = Voice::new(SR, patch);
+        a.set_freq_hz(110.0);
+        b.set_freq_hz(110.0);
+
+        // Same notes at the same sample offsets, rendered in different blocks.
+        let mut ya = vec![0.0f32; 24_000];
+        let mut yb = vec![0.0f32; 24_000];
+        for (i, chunk) in ya.chunks_mut(6_000).enumerate() {
+            a.glide_to_hz(110.0 + i as f32);
+            a.render(chunk);
+        }
+        let mut written = 0usize;
+        let mut note = 0usize;
+        while written < yb.len() {
+            if written % 6_000 == 0 {
+                b.glide_to_hz(110.0 + note as f32);
+                note += 1;
+            }
+            let run = 137.min(6_000 - written % 6_000).min(yb.len() - written);
+            b.render(&mut yb[written..written + run]);
+            written += run;
+        }
+        assert_eq!(ya, yb, "algorithm {:04b}: the field drifted with chunking", alg.0);
+    }
+}

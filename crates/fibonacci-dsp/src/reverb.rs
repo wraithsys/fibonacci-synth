@@ -468,7 +468,19 @@ impl StereoVerb {
         // than dry, and both are just the movement continuing past the control
         // rather than a state anything has to special-case.
         let damp = self.damp_s - frame.field * FIELD_TO_DAMP;
-        let mix = self.mix_s - frame.field * FIELD_TO_MIX;
+        // The field ducks the wet *level*, and deliberately not the dry/wet
+        // balance. Subtracting from `mix` was the obvious reading of "decrease
+        // mix" and it has a consequence nobody wanted: at mix 1.0 it pulls the
+        // balance below full wet, so **dry reappears** — Billy heard it
+        // immediately, "with mix turned all the way up playing with damp i can
+        // still here some of the unaffected signal", and it measured at 5% of
+        // the dry signal at field 0.5.
+        //
+        // Ducking the wet gets the gesture — the room steps aside on a surge
+        // and returns as it settles — while a control at its endpoint keeps
+        // meaning what it says. Same lesson as the floor: a coupling may push
+        // a control, but it may not push it past its own edge.
+        let wet_duck = (1.0 - frame.field * FIELD_TO_MIX).max(0.0);
 
         // Op sends: carriers full, modulators through the ghost bleed, and
         // everything through the master gain — the master governs how loudly
@@ -543,8 +555,11 @@ impl StereoVerb {
         // instrument's direct voice.
         wet_l = self.wet_dc_l.process(wet_l.tanh());
         wet_r = self.wet_dc_r.process(wet_r.tanh());
-        let dry = frame.mix * (1.0 - mix);
-        (dry + wet_l * mix, dry + wet_r * mix)
+        let dry = frame.mix * (1.0 - self.mix_s);
+        (
+            dry + wet_l * self.mix_s * wet_duck,
+            dry + wet_r * self.mix_s * wet_duck,
+        )
     }
 }
 
