@@ -507,7 +507,25 @@ periodic is the only periodic one, and nobody chose that.
 | control | what it is |
 |---|---|
 | **field** | depth. 0 is the instrument as it shipped, exactly. |
-| **curve** | how a note's gesture returns: `φ^(±2)` as an exponent. Log drops fast then lingers; exp holds then falls away. |
+| **curve** | how a note's gesture returns: `φ^(±2)` as an exponent. Log holds, then falls away; exp drops fast and lingers near nothing. |
+
+The boost remaining a quarter, half and three quarters of the way through a
+gesture, which is the fastest way to see what the control does:
+
+| curve | 25% | 50% | 75% |
+|---|---|---|---|
+| 0 — log | 0.896 | 0.767 | 0.589 |
+| 0.5 — lin | 0.750 | 0.500 | 0.250 |
+| 1 — exp | 0.471 | 0.163 | 0.027 |
+
+**Mix up, field 1, curve exponential is a low-pass gate** — a rolling,
+industrial pluck out of an instrument with no filter section and no envelope
+section. A Buchla LPG is a vactrol: one control voltage moving amplitude and
+brightness together, with the photoresistor's lag giving the hang-then-fall.
+This is the same topology with FM index standing in for the filter — the gain,
+the index and the Room's damping are the same number, so brightness collapses
+with level because they are not separable. Exponential does the vactrol's job.
+The behaviour is a consequence, which is why there is no module for it.
 
 **Notes are gestures on the modulation, never on the audio.** A note beginning
 restarts the movement and multiplies its depth by φ²; a note ending is the same

@@ -596,3 +596,51 @@ fn the_field_is_deterministic_and_chunk_invariant() {
         assert_eq!(ya, yb, "algorithm {:04b}: the field drifted with chunking", alg.0);
     }
 }
+
+/// **The field glides instead of stepping.** Billy, before the push: "field is
+/// causing a bit of zipper".
+///
+/// `patch` only changes at block boundaries, so a control read raw from it
+/// steps once per block while a slider is dragged — and a step in modulation
+/// depth on a sounding drone is a click. The same fault that made MASTER and
+/// then INDEX clicky during the controls sweep.
+///
+/// Measured as the largest sample-to-sample jump across a full-scale move,
+/// against the same move made with the field already there.
+#[test]
+fn field_and_curve_changes_glide_instead_of_stepping() {
+    // Watched on `Frame.master`, which *is* the field's gain, rather than on
+    // the audio. Two earlier versions of this test measured the samples and
+    // both passed against the unglided code: the change lands at a block
+    // boundary, and the signal's own slope — five carriers reaching 754 Hz —
+    // is larger than the step hiding inside it. The gain has no signal in it,
+    // so a step is unmissable.
+    let step = |mutate: fn(&mut Patch)| {
+        let mut patch = Patch::init(ALGORITHMS[4], RatioMode::Golden);
+        patch.field = 0.0;
+        let mut voice = Voice::new(SR, patch);
+        voice.set_freq_hz(110.0);
+
+        let mut gains: Vec<f32> = Vec::with_capacity(48_000);
+        for block in 0..100 {
+            if block == 50 {
+                mutate(voice.patch_mut());
+            }
+            voice.render_frames(480, |_, frame| gains.push(frame.master));
+        }
+        gains.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max)
+    };
+
+    // The field's own movement runs at 0.05–0.85 Hz, so its per-sample change
+    // is in the 1e-5 range. A parameter arriving in one block is orders above.
+    let moved = step(|p| p.field = 1.0);
+    let curved = step(|p| {
+        p.field = 1.0;
+        p.curve = 1.0;
+    });
+    assert!(
+        moved < 1e-3,
+        "field jumped: the gain moved {moved} between adjacent samples"
+    );
+    assert!(curved < 1e-3, "curve jumped: the gain moved {curved}");
+}

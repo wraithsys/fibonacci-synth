@@ -402,6 +402,9 @@ enum Event {
     /// next, or the sample-and-hold being switched off. All three are the
     /// same gesture and reach the same place.
     NoteOff,
+    /// The strike pad: a note by hand, with its own curve and field depth for
+    /// that gesture alone.
+    Strike { curve: f32, field: f32 },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -429,6 +432,7 @@ fn apply(voice: &mut Voice, verb: &mut StereoVerb, melody: &mut Melody, ev: Even
         }
         Event::GlideTo(hz) => voice.glide_to_hz(hz),
         Event::NoteOff => voice.note_off(),
+        Event::Strike { curve, field } => voice.strike(curve, field),
     }
 }
 
@@ -1896,6 +1900,9 @@ struct App {
     /// shots the same way.
     shot: Option<(f64, std::path::PathBuf)>,
     shot_requested: bool,
+    /// Where the last strike landed on the pad, 0..1 in each axis. Not
+    /// persisted: it marks a gesture, not a setting.
+    strike_at: Option<(f32, f32)>,
     /// The header pane's visibility. Not persisted.
     presets_open: bool,
     /// The single highlighted preset — at most one, ever.
@@ -1978,6 +1985,7 @@ impl App {
             }),
             shot_requested: false,
             presets_open: false,
+            strike_at: None,
             preset_selected: None,
             preset_armed: PaneArm::None,
             restored,
@@ -3086,6 +3094,110 @@ impl App {
         painter.galley(Pos2::new(x + period, y), galley, WHITE);
     }
 
+    /// **STRIKE**: a note by hand, and where you hit it is what it sounds like.
+    ///
+    /// Billy, 2026-08-06, for the empty space below THE ROOM. A click is a
+    /// note-on; the point decides the gesture, x overriding `curve` and y the
+    /// field's depth **for that one note**. No dragging, by his instruction —
+    /// it is a strike, not a ribbon.
+    ///
+    /// The overrides last exactly as long as the gesture, so the pad borrows
+    /// the instrument rather than editing it: nothing struck here changes a
+    /// control, and the next note from the sequencer or a key clears it. That
+    /// is what makes it safe to hit while a patch you like is running.
+    fn draw_strike_pad(&mut self, ui: &mut egui::Ui) {
+        Self::inverted_strip(ui, "STRIKE");
+        ui.add_space(4.0);
+        let side = ui.available_width().min(200.0);
+        let (rect, resp) =
+            ui.allocate_exact_size(Vec2::new(side, side), Sense::click());
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let p = ui.painter();
+        p.rect_stroke(rect, Rounding::ZERO, Stroke::new(1.0_f32, WHITE));
+
+        // A φ-spaced lattice rather than an even one: the grid says what the
+        // axes are, and on this instrument what they are is golden.
+        let stroke = Stroke::new(1.0_f32, WHITE);
+        let mut t = 1.0 / PHI;
+        for _ in 0..4 {
+            let x = (rect.min.x + rect.width() * t).round();
+            let y = (rect.min.y + rect.height() * t).round();
+            Self::dotted_line(p, Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y), stroke);
+            Self::dotted_line(p, Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y), stroke);
+            t /= PHI;
+        }
+
+        // Where the last strike landed, so a good one can be found again.
+        if let Some((sx, sy)) = self.strike_at {
+            let c = Pos2::new(
+                (rect.min.x + rect.width() * sx).round(),
+                (rect.max.y - rect.height() * sy).round(),
+            );
+            let r = 5.0;
+            p.line_segment([Pos2::new(c.x - r, c.y), Pos2::new(c.x + r, c.y)], stroke);
+            p.line_segment([Pos2::new(c.x, c.y - r), Pos2::new(c.x, c.y + r)], stroke);
+            p.rect_stroke(Rect::from_center_size(c, Vec2::splat(r * 2.0)), Rounding::ZERO, stroke);
+        }
+
+        let font = ui_font(ui.ctx(), 9.0);
+        p.text(
+            Pos2::new(rect.min.x + 3.0, rect.max.y - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            "log",
+            font.clone(),
+            WHITE,
+        );
+        p.text(
+            Pos2::new(rect.max.x - 3.0, rect.max.y - 2.0),
+            egui::Align2::RIGHT_BOTTOM,
+            "curve  exp",
+            font.clone(),
+            WHITE,
+        );
+        p.text(
+            Pos2::new(rect.min.x + 3.0, rect.min.y + 2.0),
+            egui::Align2::LEFT_TOP,
+            "field",
+            font,
+            WHITE,
+        );
+
+        if resp.clicked() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let x = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
+                // Up is more, which is the only way a vertical axis reads.
+                let y = 1.0 - ((pos.y - rect.min.y) / rect.height()).clamp(0.0, 1.0);
+                self.strike_at = Some((x, y));
+                let _ = self
+                    .rig
+                    .ctrl_tx
+                    .push(Event::Strike { curve: x, field: y });
+                self.push_log(format!("strike: curve {x:.2}, field {y:.2}."));
+            }
+        }
+    }
+
+    /// A dotted line between two points, snapped to the pixel grid — the
+    /// lattice idiom the pane bevels already use, drawn straight.
+    fn dotted_line(p: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
+        const DOT: f32 = 1.0;
+        const STEP: f32 = 4.0;
+        let span = (b - a).length();
+        let dir = (b - a) / span.max(1.0);
+        let mut d = 0.0;
+        while d < span {
+            let q = a + dir * d;
+            p.rect_filled(
+                Rect::from_min_size(Pos2::new(q.x.round(), q.y.round()), Vec2::splat(DOT)),
+                Rounding::ZERO,
+                stroke.color,
+            );
+            d += STEP;
+        }
+    }
+
     /// The presets pane (Billy's sweep, 2026-08-05): a toggleable window
     /// hanging under the header chip. One text field both filters the bank
     /// live and names a save; SAVE and DELETE sit beside it; the bank lists
@@ -4060,6 +4172,8 @@ impl eframe::App for App {
             if verb_changed {
                 self.send_verb();
             }
+            ui.add_space(CELL_GUTTER);
+            self.draw_strike_pad(ui);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -4319,9 +4433,9 @@ impl eframe::App for App {
                     "curve {:.2}. a note's boost returns {}.",
                     self.shadow.curve,
                     if self.shadow.curve < 0.33 {
-                        "fast, then lingering"
-                    } else if self.shadow.curve > 0.67 {
                         "held, then falling away"
+                    } else if self.shadow.curve > 0.67 {
+                        "fast, then lingering — a pluck"
                     } else {
                         "evenly"
                     }

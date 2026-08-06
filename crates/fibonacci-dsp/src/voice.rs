@@ -156,6 +156,15 @@ pub struct Voice {
     /// mode. It does not multiply master — it *fills the headroom above* it,
     /// because master is the floor.
     breath: Breath,
+    /// Glide-smoothed field depth and curve, chasing `patch.field` and
+    /// `patch.curve`.
+    ///
+    /// Both glide for the same reason master and index do: `patch` only
+    /// changes at block boundaries, so reading it raw makes a dragged slider
+    /// step once per block, and a step in modulation depth on a sounding drone
+    /// is a zipper. Billy heard it on field before this was pushed.
+    field_smooth: f32,
+    curve_smooth: f32,
     /// The field's movement, applied one sample later.
     field_amount: f32,
     /// The field's pitch multiplier, applied one sample later — the same
@@ -189,7 +198,15 @@ impl Voice {
             breath: Breath::new(sample_rate, patch.ratio_mode),
             field_pitch: 1.0,
             field_amount: 0.0,
+            field_smooth: patch.field.clamp(0.0, 1.0),
+            curve_smooth: patch.curve.clamp(0.0, 1.0),
         }
+    }
+
+    /// A note struck by hand from the strike pad, carrying its own curve and
+    /// depth for that one gesture.
+    pub fn strike(&mut self, curve: f32, field: f32) {
+        self.breath.strike(curve, field);
     }
 
     /// A note ended. Only a MIDI key sends this — the sequencer has no
@@ -344,6 +361,8 @@ impl Voice {
         // like `freq` does.
         let index_target = self.patch.index.clamp(0.0, 1.0);
         let master_target = master_gain(self.patch.master_level);
+        let field_target = self.patch.field.clamp(0.0, 1.0);
+        let curve_target = self.patch.curve.clamp(0.0, 1.0);
         let param_k = 1.0 - (-1.0 / (PARAM_GLIDE_S * self.sample_rate)).exp();
         let inv_carriers = 1.0 / self.compiled.carrier_count as f32;
         let rip = self.patch.rip.clamp(0.0, 1.0);
@@ -441,6 +460,8 @@ impl Voice {
             // its output modulates the carriers one sample later.
             self.rip_sig = self.rip_line.process(mix * inv_carriers);
             self.master += (master_target - self.master) * param_k;
+            self.field_smooth += (field_target - self.field_smooth) * param_k;
+            self.curve_smooth += (curve_target - self.curve_smooth) * param_k;
             // The field rides the *glided* frequency, so its rate follows the
             // drone continuously through a portamento instead of stepping when
             // the target changes.
@@ -451,7 +472,7 @@ impl Voice {
             // which is the instrument as it shipped.
             let field = self
                 .breath
-                .tick(self.freq, self.patch.field, self.master, self.patch.curve);
+                .tick(self.freq, self.field_smooth, self.master, self.curve_smooth);
             self.field_pitch = field.pitch;
             self.field_amount = field.amount;
             emit(

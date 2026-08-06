@@ -102,8 +102,22 @@ const MAX_INTERVAL_S: f32 = 8.0;
 const RELEASE_BOOST: f32 = 1.0 / PHI;
 
 /// The curve control's exponent range, as a power of φ. At 0.5 the return is
-/// linear; toward 0 it is logarithmic (drops fast, then lingers); toward 1 it
-/// is exponential (holds, then falls away).
+/// linear; toward 0 it is logarithmic (holds, then falls away); toward 1 it is
+/// exponential (drops fast, then lingers near nothing — a pluck).
+///
+/// Measured, as the fraction of the boost remaining a quarter, half and three
+/// quarters of the way through the gesture:
+///
+/// | curve | 25% | 50% | 75% |
+/// |-------|-----|-----|-----|
+/// | 0 — log | 0.896 | 0.767 | 0.589 |
+/// | 0.5 — lin | 0.750 | 0.500 | 0.250 |
+/// | 1 — exp | 0.471 | 0.163 | 0.027 |
+///
+/// The table is here because the prose was inverted in four places at once
+/// (2026-08-06). The labels were always right — Billy found the pluck on
+/// exponential, exactly where a fast decay belongs — and every description of
+/// them said the opposite. A test comparing the two shapes is what caught it.
 const CURVE_RANGE: f32 = 4.0;
 
 /// The five-integer signature of each ratio mode: the same sequence the
@@ -142,6 +156,10 @@ pub struct Breath {
     /// The interval between the last two note beginnings, in seconds — how
     /// fast the instrument is being played. The gesture is sized from this.
     interval: f32,
+    /// Per-gesture overrides from a struck note, cleared by the next note from
+    /// any other source.
+    over_curve: Option<f32>,
+    over_field: Option<f32>,
 }
 
 /// What the field is doing this sample.
@@ -172,6 +190,8 @@ impl Breath {
             mode,
             since_trigger: None,
             interval: LONE_NOTE_S,
+            over_curve: None,
+            over_field: None,
             boost_level: 1.0,
         }
     }
@@ -217,6 +237,24 @@ impl Breath {
     /// wearing a different word — the sound has no attack and no release, it
     /// simply moves more for a while.
     pub fn trigger(&mut self) {
+        self.over_curve = None;
+        self.over_field = None;
+        self.begin();
+    }
+
+    /// A note struck by hand, carrying its own curve and depth for that one
+    /// gesture — the strike pad's note-on.
+    ///
+    /// The overrides last exactly as long as the gesture does: the next note
+    /// from anywhere replaces them, and a note from the sequencer or a key
+    /// clears them, so nothing struck by hand leaks into what follows.
+    pub fn strike(&mut self, curve: f32, field: f32) {
+        self.over_curve = Some(curve.clamp(0.0, 1.0));
+        self.over_field = Some(field.clamp(0.0, 1.0));
+        self.begin();
+    }
+
+    fn begin(&mut self) {
         // Learn the tempo from the playing. Only a *beginning* counts: a
         // release is part of the note it ends, not a new one.
         if let Some(elapsed) = self.since_trigger {
@@ -267,9 +305,9 @@ impl Breath {
     /// The trigger boost still in flight, 0..1, shaped by `curve`.
     ///
     /// `curve` is a bias: 0.5 returns linearly, below that logarithmically
-    /// (drops away fast, then lingers), above it exponentially (holds, then
-    /// falls). The exponent runs over `φ^±2`, so the extremes are golden
-    /// rather than arbitrary.
+    /// (holds, then falls away), above it exponentially (drops fast, then
+    /// lingers near nothing). The exponent runs over `φ^±2`, so the extremes
+    /// are golden rather than arbitrary.
     fn boost(&self, curve: f32) -> f32 {
         let Some(t) = self.since_trigger else {
             return 0.0;
@@ -293,7 +331,10 @@ impl Breath {
     /// volume control stops being one. Reaching up by a *ratio* keeps both, and
     /// φ² is the same contrast the gesture already uses.
     pub fn tick(&mut self, freq: f32, field: f32, floor: f32, curve: f32) -> Field {
-        let field = field.clamp(0.0, 1.0);
+        // A struck note brings its own depth and curve for the length of its
+        // gesture; everything else uses the controls.
+        let field = self.over_field.unwrap_or(field).clamp(0.0, 1.0);
+        let curve = self.over_curve.unwrap_or(curve);
         let floor = floor.clamp(0.0, 1.0);
         let f = Self::rate_hz(freq);
         let sig = signature(self.mode);
@@ -598,5 +639,67 @@ mod gesture_tests {
             );
             last = swing;
         }
+    }
+}
+
+#[cfg(test)]
+mod strike_tests {
+    use super::*;
+
+    const SR: f32 = 48_000.0;
+
+    /// **A strike borrows the instrument, it does not edit it.** Its curve and
+    /// depth last exactly as long as its own gesture; the next note from
+    /// anywhere clears them and the controls take over again.
+    ///
+    /// That is what makes the pad safe to hit while a patch you like is
+    /// running — nothing you do on it survives the note.
+    #[test]
+    fn a_strikes_overrides_die_with_its_gesture() {
+        let mut b = Breath::new(SR, RatioMode::Golden);
+        // Struck at full depth, while the control says nothing at all.
+        b.strike(0.5, 1.0);
+        let struck = b.tick(110.0, 0.0, 0.5, 0.5).amount;
+        assert!(
+            struck > 0.05,
+            "a strike at full depth produced {struck} with the field control at 0"
+        );
+
+        // An ordinary note takes the controls back.
+        b.trigger();
+        let after = b.tick(110.0, 0.0, 0.5, 0.5).amount;
+        assert_eq!(
+            after, 0.0,
+            "the strike's depth outlived its gesture — the pad edited the patch"
+        );
+    }
+
+    /// The pad's y axis really is depth, and its x axis really is the curve:
+    /// a higher strike moves more, and a strike biased toward `exp` holds its
+    /// boost longer than one biased toward `log`.
+    #[test]
+    fn the_pads_axes_do_what_they_claim() {
+        let at = |curve: f32, field: f32, after_s: f32| {
+            let mut b = Breath::new(SR, RatioMode::Golden);
+            b.strike(curve, field);
+            let mut last = 0.0;
+            for _ in 0..(SR * after_s) as usize {
+                last = b.tick(110.0, 0.0, 0.5, 0.5).amount;
+            }
+            last
+        };
+        // y: higher strikes move more, measured the instant they land.
+        assert!(at(0.5, 1.0, 0.001) > at(0.5, 0.4, 0.001), "y is not depth");
+        // x: halfway through the gesture, exponential has already dropped away
+        // and logarithmic is still holding. That direction is the whole reason
+        // the plucks live at the exp end, and it is the assertion that caught
+        // four inverted descriptions of it.
+        let exp = at(1.0, 1.0, LONE_NOTE_S * GESTURE_FRACTION * 0.5);
+        let log = at(0.0, 1.0, LONE_NOTE_S * GESTURE_FRACTION * 0.5);
+        assert!(
+            exp < log,
+            "x is not the curve: exp should have dropped below log by halfway, \
+             got exp {exp} vs log {log}"
+        );
     }
 }

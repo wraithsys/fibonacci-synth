@@ -182,9 +182,10 @@ pub struct Patch {
     ///
     /// A note — from a key or from the sequencer changing pitch — restarts the
     /// field's movement and multiplies its depth. This decides the shape of
-    /// the way back down: 0.5 is linear, below is logarithmic (drops away
-    /// fast, then lingers), above is exponential (holds, then falls). The
-    /// exponent runs over `φ^±2`.
+    /// the way back down: 0.5 is linear, below is logarithmic (holds, then
+    /// falls away), above is exponential (drops fast, then lingers near
+    /// nothing — which is where the plucks live). The exponent runs over
+    /// `φ^±2`; the shapes are tabulated on `Breath`'s `CURVE_RANGE`.
     ///
     /// The envelope is on the **modulation depth**, never on the audio — which
     /// is why none of this is an ADSR under another name. The sound has no
