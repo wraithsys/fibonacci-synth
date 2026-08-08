@@ -134,11 +134,26 @@ impl eframe::App for App {
             let cell = (avail.width() / frame.w as f32)
                 .min(avail.height() / frame.h as f32)
                 .max(1.0);
-            let origin = avail.min
+            let mut origin = avail.min
                 + egui::vec2(
                     (avail.width() - frame.w as f32 * cell) * 0.5,
                     (avail.height() - frame.h as f32 * cell) * 0.5,
                 );
+
+            // Whole-block jitter: the entire mark slams around as one unit, on a fast
+            // snap clock and quantised to whole cells. Applied to the origin so every
+            // point moves together -- that wholesale displacement is what sells it as a
+            // signal breaking up, with the per-band tearing riding on top of it.
+            if let Some(p) = dissolve {
+                let bq = (t * 22.0).floor() as i64 as u8;
+                let bx = (hash01(bq, 3) - 0.5) * 2.0;
+                let by = (hash01(bq, 91) - 0.5) * 2.0;
+                let amp = 11.0 * p;
+                origin += egui::vec2(
+                    (bx * amp).round() * cell,
+                    (by * amp * 0.55).round() * cell,
+                );
+            }
             for &(x, y) in &frame.pts {
                 let mut pos = origin + egui::vec2(x as f32 * cell, y as f32 * cell);
                 let mut gray = 235.0_f32;
