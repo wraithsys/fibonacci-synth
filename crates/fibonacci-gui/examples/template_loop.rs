@@ -20,8 +20,12 @@ use std::time::Instant;
 
 /// Seconds per frame while the entrance plays.
 const FRAME_SECS: f32 = 0.07;
-/// Beat to hold on the last frame before looping, so the resolve reads.
-const HOLD_SECS: f32 = 0.9;
+/// How long the mark takes to deform and dissolve away before the loop restarts.
+///
+/// There is deliberately no static hold. A frozen frame reads as "the animation stopped"
+/// rather than "the animation is between beats", and the exit is computed rather than
+/// baked -- no extra frames, and the timing is a constant to tune, not a re-render.
+const DISSOLVE_SECS: f32 = 1.1;
 
 struct Frame {
     w: usize,
@@ -82,20 +86,33 @@ struct App {
     start: Instant,
     shot: Option<PathBuf>,
     shot_taken: bool,
+    /// Where in the dissolve (0..1) a `--screenshot` lands.
+    shot_p: f32,
+}
+
+/// Deterministic 0..1 per cell, so a point dissolves at the same moment every cycle
+/// instead of flickering. Cheap integer hash -- no RNG, no state.
+fn hash01(x: u8, y: u8) -> f32 {
+    let h = (x as u32)
+        .wrapping_mul(73_856_093)
+        ^ (y as u32).wrapping_mul(19_349_663);
+    let h = h ^ (h >> 13);
+    ((h.wrapping_mul(1_274_126_177) >> 8) & 0xffff) as f32 / 65535.0
 }
 
 impl App {
-    /// Forward through the set, then hold, then restart.
-    fn frame_at(&self, t: f32) -> (&Frame, usize, bool) {
+    /// Forward through the set, then deform and dissolve, then restart.
+    /// `Some(p)` is dissolve progress 0..1; `None` means still playing in.
+    fn frame_at(&self, t: f32) -> (&Frame, usize, Option<f32>) {
         let n = self.frames.len();
         let play = n as f32 * FRAME_SECS;
-        let cycle = play + HOLD_SECS;
+        let cycle = play + DISSOLVE_SECS;
         let local = t % cycle;
         if local < play {
             let i = ((local / FRAME_SECS) as usize).min(n - 1);
-            (&self.frames[i], i, false)
+            (&self.frames[i], i, None)
         } else {
-            (&self.frames[n - 1], n - 1, true)
+            (&self.frames[n - 1], n - 1, Some((local - play) / DISSOLVE_SECS))
         }
     }
 }
@@ -106,7 +123,7 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let t = self.start.elapsed().as_secs_f32();
-            let (frame, idx, holding) = self.frame_at(t);
+            let (frame, idx, dissolve) = self.frame_at(t);
 
             let rect = ui.max_rect();
             let painter = ui.painter();
@@ -123,31 +140,78 @@ impl eframe::App for App {
                     (avail.height() - frame.h as f32 * cell) * 0.5,
                 );
             for &(x, y) in &frame.pts {
-                let p = origin + egui::vec2(x as f32 * cell, y as f32 * cell);
+                let mut pos = origin + egui::vec2(x as f32 * cell, y as f32 * cell);
+                let mut gray = 235.0_f32;
+
+                if let Some(p) = dissolve {
+                    let r = hash01(x, y);
+
+                    // Erode: each cell has its own moment to go, so the mark eats away
+                    // unevenly instead of fading as one flat block. Eased so it starts
+                    // slow and accelerates.
+                    if r < p.powf(1.6) {
+                        continue;
+                    }
+
+                    // Glitch is COHERENT displacement -- whole rows and blocks jumping
+                    // together. Per-point scatter reads as particles/snow instead, so the
+                    // row-coherent terms dominate here and the per-cell jitter stays small.
+
+                    // Chunky horizontal tearing: rows shift in whole-cell steps. Held on a
+                    // coarse time quantum so it snaps between positions rather than
+                    // sliding, which is what makes it read as a broken signal.
+                    let tq = (t * 12.0).floor();
+                    let band_id = (y as f32 / 5.0).floor();
+                    let band = (hash01(band_id as u8, (tq as u8) & 0x3f) - 0.5) * 2.0;
+                    let stepped = (band * 14.0 * p).round() * cell;
+
+                    // A minority of bands blow out much further, and which ones changes
+                    // on the same coarse clock.
+                    let tear = if hash01((band_id as u8).wrapping_add(31), (tq as u8) & 0x3f) > 0.62 {
+                        (hash01(band_id as u8, 7) - 0.5) * cell * 70.0 * p * p
+                    } else {
+                        0.0
+                    };
+
+                    // Blocks also drop in whole-cell steps, so the mark comes apart in
+                    // slabs rather than raining evenly.
+                    let slab = ((hash01(band_id as u8, 19) - 0.4) * 10.0 * p * p).round() * cell;
+
+                    // Small per-cell jitter only, and only late, to rough up the edges.
+                    let late = (p - 0.55).max(0.0) / 0.45;
+                    let jitter_x = (r - 0.5) * cell * 2.2 * late;
+                    let jitter_y = (hash01(y, x) - 0.5) * cell * 2.2 * late;
+
+                    pos += egui::vec2(stepped + tear + jitter_x, slab + jitter_y);
+
+                    // Survivors dim toward the background, so the last cells do not
+                    // simply pop out of existence.
+                    gray = 235.0 * (1.0 - p * 0.55) + 12.0 * (p * 0.55);
+                }
+
                 painter.rect_filled(
-                    egui::Rect::from_min_size(p, egui::vec2(cell * 0.9, cell * 0.9)),
+                    egui::Rect::from_min_size(pos, egui::vec2(cell * 0.9, cell * 0.9)),
                     0.0,
-                    egui::Color32::from_gray(235),
+                    egui::Color32::from_gray(gray as u8),
                 );
             }
 
             painter.text(
                 rect.min + egui::vec2(10.0, 8.0),
                 egui::Align2::LEFT_TOP,
-                format!(
-                    "{}  frame {}/{}{}",
-                    self.name,
-                    idx + 1,
-                    self.frames.len(),
-                    if holding { "  (hold)" } else { "" }
-                ),
+                match dissolve {
+                    None => format!("{}  frame {}/{}", self.name, idx + 1, self.frames.len()),
+                    Some(p) => format!("{}  dissolving {:.0}%", self.name, p * 100.0),
+                },
                 egui::FontId::monospace(12.0),
                 egui::Color32::from_gray(120),
             );
         });
 
         if let Some(path) = self.shot.clone() {
-            if !self.shot_taken && self.start.elapsed().as_secs_f32() > FRAME_SECS * 5.5 {
+            // Land at a chosen point in the dissolve, which is the part worth checking.
+            let shot_at = self.frames.len() as f32 * FRAME_SECS + DISSOLVE_SECS * self.shot_p;
+            if !self.shot_taken && self.start.elapsed().as_secs_f32() > shot_at {
                 self.shot_taken = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             }
@@ -184,6 +248,13 @@ fn main() -> eframe::Result<()> {
         .position(|a| a == "--screenshot")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
+    let shot_p = args
+        .iter()
+        .position(|a| a == "--shot-p")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.45)
+        .clamp(0.0, 0.99);
 
     let dir = PathBuf::from("crates/fibonacci-gui/assets/portraits");
     let frames = load_set(&dir, &name);
@@ -192,12 +263,12 @@ fn main() -> eframe::Result<()> {
         std::process::exit(2);
     }
     println!(
-        "{name}: {} frames, {}x{}, {:.2}s play + {:.1}s hold",
+        "{name}: {} frames, {}x{}, {:.2}s play + {:.1}s dissolve (never static)",
         frames.len(),
         frames[0].w,
         frames[0].h,
         frames.len() as f32 * FRAME_SECS,
-        HOLD_SECS
+        DISSOLVE_SECS
     );
 
     eframe::run_native(
@@ -213,6 +284,7 @@ fn main() -> eframe::Result<()> {
                 start: Instant::now(),
                 shot,
                 shot_taken: false,
+                shot_p,
             }))
         }),
     )
